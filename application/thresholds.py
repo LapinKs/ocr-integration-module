@@ -1,0 +1,3 @@
+# различные правила policy
+FORMULA_CONFIDENCE_THRESHOLD = 0.8
+BBOX_IOU_THRESHOLD = 0.5
