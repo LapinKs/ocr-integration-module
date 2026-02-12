@@ -10,15 +10,16 @@ __pycache__/
 local_settings.py
 db.sqlite3
 media
-
+tools/
+test_merger.py
 ### Linux ###
 *~
-
-# JSON и PDF
+**/images
 *.json
 *.pdf
 
 demo.py
+demo2.py
 config.py
 
 # temporary files which can be created if a process still has a handle open of a deleted file

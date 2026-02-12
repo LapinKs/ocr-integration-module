@@ -1,14 +1,18 @@
 from domain.formula import Formula
 from domain.bbox import BoundingBox
 
-def parse_formula_candidates(raw: list[dict]) -> list[Formula]:
+
+def parse_formula_regions(raw: list[dict]) -> list[Formula]:
     formulas = []
 
-    for item in raw:
+    for r in raw:
+        bbox = BoundingBox(*r["bbox"])
+
         formulas.append(
             Formula(
-                bbox=BoundingBox(*item["bbox"]),
-                latex=item.get("latex", "[FORMULA]")
+                bbox=bbox,
+                latex=r["latex"],
+                confidence=r.get("confidence", 1.0)
             )
         )
 
