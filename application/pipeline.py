@@ -1,27 +1,8 @@
-from infrastructure.ocr.parser import parse_ocr_page
-from infrastructure.formula.parser import parse_formula_regions
-from application.merge_formulas import merge_text_and_formulas
+from application.services.formula_service import FormulaService
+from application.merge_formulas import merge_formulas_into_ocr
 
 
-def process_image(
-    image_path: str,
-    ocr_client,
-    layout_client,
-    latex_ocr_client
-):
-    ocr_pages = ocr_client.recognize(image_path)
-
-    texts = []
-    for page in ocr_pages:
-        texts.extend(parse_ocr_page(page))
-
-    formula_regions = layout_client.detect_formulas(image_path)
-
-    latex_results = latex_ocr_client.recognize(
-        image_path,
-        formula_regions
-    )
-
-    formulas = parse_formula_regions(latex_results)
-
-    return merge_text_and_formulas(texts, formulas)
+def process_image(image_path: str, ocr_json: dict, formula_service: FormulaService):
+    formulas = formula_service.process(image_path)
+    merged = merge_formulas_into_ocr(ocr_json, formulas)
+    return merged

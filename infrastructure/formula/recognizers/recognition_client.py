@@ -1,7 +1,8 @@
+from application.ports.formula_recognizer import FormulaRecognizer
 from PIL import Image
 from pix2tex.cli import LatexOCR
 
-class LatexOCRClient:
+class LatexOCRClient(FormulaRecognizer):
     def __init__(self, device: str = "cpu"):
         self.model = LatexOCR()
         self.device = device

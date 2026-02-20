@@ -1,13 +1,14 @@
+from application.ports.formula_localizer import FormulaLocalizer
 from doclayout_yolo import YOLOv10
-
+from config import MODEL
 FORMULA_CLASS_NAMES = {
     "isolate_formula",
     "formula",
     "display_formula"
 }
 
-class DocLayoutYOLOClient:
-    def __init__(self, model_path: str, device: str = "cpu"):
+class DocLayoutYOLOClient(FormulaLocalizer):
+    def __init__(self, model_path: str = MODEL, device: str = "cpu"):
         self.model = YOLOv10(model_path)
         self.device = device
 

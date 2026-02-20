@@ -1,37 +1,17 @@
-from infrastructure.ocr.client import OCRClient
-from infrastructure.formula.localization_client import DocLayoutYOLOClient
-from infrastructure.formula.recognition_client import LatexOCRClient
 from pathlib import Path
 import json
 from application.merge_formulas import merge_formulas_into_ocr
-from config import OCR_API_KEY, OCR_BASE_URL, IMAGE, OCR_JSON_PATH, MODEL, OUT_JSON_PATH, OUT_PDF_PATH
+from config import OCR_API_KEY, OCR_BASE_URL, IMAGE, OCR_JSON_PATH, OUT_JSON_PATH, OUT_PDF_PATH
 from infrastructure.pdf.ocr_json_to_pdf import ocr_json_to_pdf
-
+from infrastructure.providers import create_formula_service
 def main():
     with open(OCR_JSON_PATH, "r", encoding="utf-8") as f:
-        ocr = json.load(f)
-    # ocr = OCRClient(OCR_API_KEY, OCR_BASE_URL)
-    # await OCRClient(OCR_API_KEY, OCR_BASE_URL)
-    # layout = LocalizationClient()
-    # latex_ocr = RecognitionClient()
-    # regions = layout.detect_formulas(IMAGE)
-    # results = latex_ocr.recognize(IMAGE,regions)
-    # merged = merge_formulas_into_ocr(ocr, results)
-    layout = DocLayoutYOLOClient(
-        model_path=MODEL,
-        device="cpu"
-    )
+        json_ocr = json.load(f)
+    formula_service = create_formula_service()
 
-    latex_ocr = LatexOCRClient(device="cpu")
+    formulas = formula_service.process(IMAGE)
 
-    regions = layout.detect_formulas(IMAGE)
-
-    results = latex_ocr.recognize(
-        image_path=IMAGE,
-        regions=regions
-    )
-
-    merged = merge_formulas_into_ocr(ocr, results)
+    merged = merge_formulas_into_ocr(json_ocr, formulas)
 
     with open(OUT_JSON_PATH, "w", encoding="utf-8") as f:
         json.dump(merged, f, ensure_ascii=False, indent=2)
