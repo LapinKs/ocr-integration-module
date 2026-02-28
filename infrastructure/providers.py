@@ -3,7 +3,7 @@ from infrastructure.formula.recognizers.recognition_client import LatexOCRClient
 from application.services.formula_service import FormulaService
 from infrastructure.ocr.client import OCRClient
 from application.ports.ocr_client import OCRClientPort
-from config import MODEL, OCR_API_KEY, OCR_BASE_URL
+from config import MODEL, OCR_API_KEY, OCR_BASE_URL, OCR_JSON_PATH
 
 
 def create_localizer():
@@ -25,4 +25,6 @@ def create_formula_service():
 def create_ocr_client() -> OCRClientPort:
     return OCRClient(
         api_key=OCR_API_KEY,
-        base_url=OCR_BASE_URL)
+        base_url=OCR_BASE_URL,
+        fallback_json_path=OCR_JSON_PATH,
+        )

@@ -28,3 +28,6 @@ ultralytics==8.4.11
 ultralytics-thop==2.0.18
 urllib3==2.6.3
 x-transformers==0.15.0
+numpy==1.24.2
+onnxruntime_gpu==1.14.1
+opencv_python==4.8.1.78
