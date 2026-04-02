@@ -3,13 +3,21 @@ from app.infrastructure.formula.recognizers.recognition_client import LatexOCRCl
 from app.application.services.formula_service import FormulaService
 from app.infrastructure.ocr.client import OCRClient
 from app.application.ports.ocr_client import OCRClientPort
-from app.core.config import MODEL, OCR_API_KEY, OCR_BASE_URL, OCR_JSON_PATH
+from app.infrastructure.formula.localizers.todo_yolo11_seg_client import YOLO11SegClient
+from app.core.config import MODEL, OCR_API_KEY, OCR_BASE_URL, OCR_JSON_PATH,MODEL_SEGMENTATION
 
 def create_localizer():
     return DocLayoutYOLOClient(
         model_path=MODEL,
         device="cpu"
     )
+# def create_localizer():
+
+#     return YOLO11SegClient(
+#         model_path=MODEL_SEGMENTATION,
+#         device="cpu",
+#         conf_threshold=0.5
+#     )
 
 
 def create_recognizer():

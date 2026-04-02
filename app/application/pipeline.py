@@ -18,13 +18,17 @@ class Pipeline:
         self.ocr_service = create_ocr_client()
 
     async def process(self, images: list[bytes]) -> bytes:
-
+        total_start = time.time()
+        num_pages = len(images)
+        print(f"\nПоступило страниц: {num_pages}")
+        parallel_start = time.time()
         writer = PdfWriter()
-        time_start = time.time()
         ocr_results, (formulas_list,sizes) = await asyncio.gather(
             self.ocr_service.recognize_many(images),
             self.formula_service.process_batch(images)
         )
+        parallel_time = time.time() - parallel_start
+        merge_start = time.time()
         for formulas, json_ocr, (img_w, img_h) in zip(formulas_list, ocr_results, sizes):
 
             page = ocr_json_to_page(json_ocr)
@@ -33,18 +37,24 @@ class Pipeline:
             formulas_domain = normalize_formulas(formulas)
 
             merged_page = merge(page, formulas_domain)
-
             pdf_bytes = render_page_to_pdf(merged_page)
 
             reader = PdfReader(io.BytesIO(pdf_bytes))
 
             for p in reader.pages:
                 writer.add_page(p)
-
+        merge_time = time.time() - merge_start
+        assemble_start = time.time()
         output = io.BytesIO()
         writer.write(output)
         output.seek(0)
-        print(f"Total time: {time.time() - time_start:.2f} seconds")
+        assemble_time = time.time() - assemble_start
+
+        total_time = time.time() - total_start
+
+        print(f"Мердж: {merge_time:.2f} сек")
+        print(f"Сериализация в PDF: {assemble_time:.2f} сек")
+        print(f"Общее время: {total_time:.2f} сек")
         return output.read()
 
 def build_pipeline():

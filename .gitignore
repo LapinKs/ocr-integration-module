@@ -14,6 +14,7 @@ test_merger.py
 ### Linux ###
 *~
 **/images
+**/output
 **/frontend
 **/models
 *.json
