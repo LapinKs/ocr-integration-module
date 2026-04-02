@@ -1,0 +1,40 @@
+
+version: '3.8'
+
+services:
+  redis:
+    image: redis:alpine
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    command: uvicorn app.presentation.api.app:app --host 0.0.0.0 --port 8000
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379
+
+  formula-worker-1:
+    build: .
+    command: celery -A app.infrastructure.celery.tasks worker -Q formula --concurrency=2
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379
+
+  formula-worker-2:
+    build: .
+    command: celery -A app.infrastructure.celery.tasks worker -Q formula --concurrency=2
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379
+
+  merge-worker:
+    build: .
+    command: celery -A app.infrastructure.celery.tasks worker -Q merge --concurrency=1
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379

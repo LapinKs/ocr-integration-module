@@ -11,13 +11,7 @@ def create_localizer():
         model_path=MODEL,
         device="cpu"
     )
-# def create_localizer():
 
-#     return YOLO11SegClient(
-#         model_path=MODEL_SEGMENTATION,
-#         device="cpu",
-#         conf_threshold=0.5
-#     )
 
 
 def create_recognizer():
@@ -35,3 +29,13 @@ def create_ocr_client() -> OCRClientPort:
         base_url=OCR_BASE_URL,
         fallback_json_path=OCR_JSON_PATH,
         )
+
+
+
+# def create_localizer():
+
+#     return YOLO11SegClient(
+#         model_path=MODEL_SEGMENTATION,
+#         device="cpu",
+#         conf_threshold=0.5
+#     )
