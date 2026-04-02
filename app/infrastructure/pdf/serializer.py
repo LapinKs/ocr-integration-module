@@ -51,42 +51,16 @@ def render_page_to_pdf(page: Page) -> bytes:
                 y = offset_y + (page.height - w.bbox.y2) * scale
                 bbox_w = (w.bbox.x2 - w.bbox.x1) * scale
                 font_size = max(6, int(bbox_w / max(len(w.text), 1) * 1.4))
-                # font_size = max(6, int((w.bbox.y2 - w.bbox.y1) * scale * 0.45))
                 c.setFont("DejaVu", font_size)
                 c.drawString(x, y, w.text)
-
-    # for f in page.formulas:
-    #     x = offset_x + f.bbox.x1 * scale
-    #     y = offset_y + (page.height - f.bbox.y2) * scale
-    #     w = (f.bbox.x2 - f.bbox.x1) * scale
-    #     h = (f.bbox.y2 - f.bbox.y1) * scale
-    #     if f.latex not in "":
-    #         c.setStrokeColorRGB(1, 0, 0)
-    #         c.setLineWidth(1)
-    #         c.rect(x, y, w, h)
-    #         c.setStrokeColorRGB(0, 0, 0)
-
-    #     img = render_latex_block(f.latex)
-
-    #     c.drawImage(
-    #         ImageReader(img),
-    #         x,
-    #         y,
-    #         width=w*0.95,
-    #         height=h*0.95,
-    #         preserveAspectRatio=True,
-    #         mask='auto'
-    #     )
     for f in page.formulas:
         x = offset_x + f.bbox.x1 * scale
         y = offset_y + (page.height - f.bbox.y2) * scale
         w = (f.bbox.x2 - f.bbox.x1) * scale
         h = (f.bbox.y2 - f.bbox.y1) * scale
 
-        # Пробуем отрендерить формулу
         try:
             img = render_latex_block(f.latex)
-            # Если дошли сюда — ошибки нет, рисуем и рамку, и формулу
             c.setStrokeColorRGB(1, 0, 0)
             c.setLineWidth(1)
             c.rect(x, y, w, h)
@@ -99,7 +73,6 @@ def render_page_to_pdf(page: Page) -> bytes:
                 mask='auto'
             )
         except Exception:
-            # Ошибка — ничего не рисуем (ни рамки, ни формулы)
             pass
 
     c.save()
