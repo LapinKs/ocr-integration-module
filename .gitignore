@@ -18,7 +18,7 @@ test_merger.py
 **/models
 *.json
 *.pdf
-doclayout_yolov8_seg.py
+doclayout_yolo.py
 yolov8seg.pt
 demo.py
 demo2.py
