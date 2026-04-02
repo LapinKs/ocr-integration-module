@@ -1,4 +1,4 @@
-
+#mask commit
 import numpy as np
 import cv2
 from typing import Tuple, Dict, Any, List
@@ -24,7 +24,6 @@ def rle_to_mask(rle: Dict) -> np.ndarray:
 
 def apply_nms_masks(masks: List[np.ndarray], scores: List[float],
                     classes: List[int], iou_threshold: float = 0.5) -> List[int]:
-    """NMS по маскам (как у коллеги)"""
     if not masks:
         return []
 
