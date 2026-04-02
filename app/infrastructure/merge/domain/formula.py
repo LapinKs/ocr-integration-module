@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from app.domain.bbox import BoundingBox
+from .bbox import BBox
 
 @dataclass
 class Formula:
-    bbox: BoundingBox
+    bbox: BBox
     latex: str
+    confidence: float

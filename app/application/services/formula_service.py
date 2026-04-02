@@ -1,34 +1,25 @@
 from app.application.ports.formula_localizer import FormulaLocalizer
 from app.application.ports.formula_recognizer import FormulaRecognizer
-import tempfile
-
+from PIL import Image
+import io
 class FormulaService:
 
     def __init__(self, localizer: FormulaLocalizer, recognizer: FormulaRecognizer):
         self.localizer = localizer
         self.recognizer = recognizer
 
-    def process_bytes(self, image_bytes: bytes):
+    async def process_batch(self, images_bytes: list[bytes]):
+        images = [
+            Image.open(io.BytesIO(b)).convert("RGB")
+            for b in images_bytes
+        ]
 
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            tmp.write(image_bytes)
-            tmp_path = tmp.name
+        regions_batch = self.localizer.detect_formulas_batch(images)
+        sizes = [(x.width, x.height) for x in images]
+        results = []
 
-        regions = self.localizer.detect(tmp_path)
-        formulas = self.recognizer.recognize(tmp_path, regions)
+        for image, regions in zip(images, regions_batch):
+            formulas = await self.recognizer.recognize(image, regions)
+            results.append(formulas)
 
-        return formulas
-
-        # regions = self.localizer.detect(image_path)
-        # formulas = []
-
-        # for region in regions:
-        #     crop = region_to_crop(image_path, region)
-
-        #     latex = self.recognizer.recognize(crop)
-
-        #     formulas.append({
-        #         "bbox": region["bbox"],
-        #         "latex": latex,
-        #         "confidence": region["confidence"]
-        #     })
+        return results,sizes

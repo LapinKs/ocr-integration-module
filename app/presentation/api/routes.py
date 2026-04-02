@@ -10,7 +10,7 @@ router = APIRouter()
 
 @router.post("/process")
 async def process_images(
-    files: List[UploadFile] = File(...),
+    files: List[UploadFile],
     pipeline = Depends(get_pipeline)
 ):
 
@@ -23,7 +23,7 @@ async def process_images(
 
         images.append(await file.read())
 
-    pdf_bytes = pipeline.process(images)
+    pdf_bytes = await pipeline.process(images)
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),

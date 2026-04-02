@@ -5,7 +5,6 @@ from app.infrastructure.ocr.client import OCRClient
 from app.application.ports.ocr_client import OCRClientPort
 from app.core.config import MODEL, OCR_API_KEY, OCR_BASE_URL, OCR_JSON_PATH
 
-
 def create_localizer():
     return DocLayoutYOLOClient(
         model_path=MODEL,

@@ -1,9 +1,8 @@
 import base64
-import pathlib
-import time
-import requests
+import asyncio
 import json
 from typing import Optional
+import httpx
 
 
 class OCRClient:
@@ -17,43 +16,34 @@ class OCRClient:
         self.headers = {"X-Api-Key": api_key}
         self.fallback_json_path = fallback_json_path
 
-    def recognize_many(self, image_paths: list[str | pathlib.Path]) -> list[dict]:
+    async def recognize_many(self, images: list[bytes]) -> list[dict]:
         try:
-            images_b64 = [self._encode_image(p) for p in image_paths]
+            images_b64 = [
+                base64.b64encode(img).decode()
+                for img in images
+            ]
 
-            task_id = self._create_task(images_b64)
-            self._wait_for_task(task_id)
-            raw = self._fetch_result(task_id)
+            async with httpx.AsyncClient(timeout=30) as client:
+                task_id = await self._create_task(client, images_b64)
+                status = await self._wait_for_task(client, task_id)
+
+                if status != "success":
+                    raise RuntimeError("OCR failed")
+
+                raw = await self._fetch_result(client, task_id)
 
             return self._decode_pages(raw)
 
         except Exception as e:
             print(f"OCR API failed: {e}")
 
-            if self.fallback_json_path:
-                print("Using fallback JSON from config...")
-                return self._load_fallback()
+            return self._fallback(len(images))
 
-            raise
-
-    def recognize_one(self, image_path: str | pathlib.Path) -> dict:
-        result = self.recognize_many([image_path])
-        return result[0] if result else {}
-
-    def _load_fallback(self) -> list[dict]:
-        with open(self.fallback_json_path, "r", encoding="utf-8") as f:
-            return [json.load(f)]
-
-    def _encode_image(self, path: str | pathlib.Path) -> str:
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode()
-
-    def _create_task(self, images_b64: list[str]) -> str:
-        resp = requests.post(
+    async def _create_task(self, client: httpx.AsyncClient, images_b64: list[str]) -> str:
+        resp = await client.post(
             f"{self.base_url}/tasks",
             headers=self.headers,
             json={"image": images_b64, "return_type": "json"},
-            timeout=30,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -63,30 +53,27 @@ class OCRClient:
 
         return data["task_id"]
 
-    def _wait_for_task(self, task_id: str):
+    async def _wait_for_task(self, client: httpx.AsyncClient, task_id: str) -> str:
         for _ in range(20):
-            resp = requests.get(
+            resp = await client.get(
                 f"{self.base_url}/tasks/{task_id}/status",
                 headers=self.headers,
-                timeout=10,
             )
             resp.raise_for_status()
+
             status = resp.json()["task_status"]
 
-            if status == "success":
-                return
-            if status == "error":
-                raise RuntimeError("OCR processing error")
+            if status in ("success", "error"):
+                return status
 
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
 
         raise TimeoutError("OCR timeout")
 
-    def _fetch_result(self, task_id: str) -> list[str]:
-        resp = requests.get(
+    async def _fetch_result(self, client: httpx.AsyncClient, task_id: str) -> list[str]:
+        resp = await client.get(
             f"{self.base_url}/tasks/{task_id}/result",
             headers=self.headers,
-            timeout=30,
         )
         resp.raise_for_status()
         return resp.json()["recognition_result"]
@@ -97,3 +84,12 @@ class OCRClient:
             decoded = base64.b64decode(page).decode("utf-8")
             pages.append(json.loads(decoded))
         return pages
+
+    def _fallback(self, count: int) -> list[dict]:
+        if not self.fallback_json_path:
+            raise RuntimeError("No fallback configured")
+
+        with open(self.fallback_json_path, "r", encoding="utf-8") as f:
+            fallback = json.load(f)
+
+        return [json.loads(json.dumps(fallback)) for _ in range(count)]

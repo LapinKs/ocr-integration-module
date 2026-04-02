@@ -1,6 +1,5 @@
 .idea/
-.analitics_py/vacancies.csv
-# Created by https://www.gitignore.io/api/macos,linux,django,python,pycharm
+
 
 ### Django ###
 *.log
@@ -15,13 +14,17 @@ test_merger.py
 ### Linux ###
 *~
 **/images
+**/frontend
+**/models
 *.json
 *.pdf
-
+doclayout_yolov8_seg.py
+yolov8seg.pt
 demo.py
 demo2.py
 config.py
-
+*.pt
+yolov8seg.pt
 # temporary files which can be created if a process still has a handle open of a deleted file
 .fuse_hidden*
 
@@ -173,7 +176,7 @@ coverage.xml
 
 # Translations
 *.mo
-
+*.pt
 # Django stuff:
 
 # Flask stuff:
