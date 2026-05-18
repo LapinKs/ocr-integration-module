@@ -1,20 +1,16 @@
 from dataclasses import dataclass
-
 @dataclass
 class BBox:
     x1: int
     y1: int
     x2: int
     y2: int
-
     @property
     def w(self):
         return self.x2 - self.x1
-
     @property
     def h(self):
         return self.y2 - self.y1
-
     @property
     def area(self):
         return max(0, self.w) * max(0, self.h)
@@ -26,7 +22,6 @@ class BBox:
             self.y2 <= other.y1 or
             self.y1 >= other.y2
         )
-
     def intersection_area(self, other: "BBox") -> int:
         if not self.intersects(other):
             return 0

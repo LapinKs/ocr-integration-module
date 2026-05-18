@@ -1,0 +1,74 @@
+version: '3.8'
+services:
+  api:
+    build: ./services/api
+    ports:
+      - 8000:8000
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - minio
+
+  segmentation:
+    build: ./services/segmentation
+    env_file:
+      - .env
+    depends_on:
+      - redis
+
+  recognition:
+    build: ./services/recognition
+    env_file:
+      - .env
+    depends_on:
+      - redis
+
+  ocr:
+    build: ./services/ocr
+    env_file:
+      - .env
+    depends_on:
+      - redis
+
+  merge:
+    build: ./services/merge
+    env_file:
+      - .env
+    depends_on:
+      - redis
+
+  update:
+    build: ./services/update
+    env_file:
+      - .env
+    depends_on:
+      - redis
+
+  pdf:
+    build: ./services/pdf
+    env_file:
+      - .env
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7
+    ports:
+      - 6379:6379
+
+  minio:
+    image: minio/minio:latest
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    ports:
+      - 9000:9000
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - 5432:5432

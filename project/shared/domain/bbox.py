@@ -8,24 +8,20 @@ class BBox:
     y2: int
 
     @property
-    def w(self):
+    def w(self) -> int:
         return self.x2 - self.x1
 
     @property
-    def h(self):
+    def h(self) -> int:
         return self.y2 - self.y1
 
     @property
-    def area(self):
+    def area(self) -> int:
         return max(0, self.w) * max(0, self.h)
 
     def intersects(self, other: "BBox") -> bool:
-        return not (
-            self.x2 <= other.x1 or
-            self.x1 >= other.x2 or
-            self.y2 <= other.y1 or
-            self.y1 >= other.y2
-        )
+        return not (self.x2 <= other.x1 or self.x1 >= other.x2 or
+                   self.y2 <= other.y1 or self.y1 >= other.y2)
 
     def intersection_area(self, other: "BBox") -> int:
         if not self.intersects(other):

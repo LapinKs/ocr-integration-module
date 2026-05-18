@@ -1,6 +1,7 @@
 .idea/
-
-
+sync_asunc_copy.py
+**/batch_output
+**/GeoSeg
 ### Django ###
 *.log
 *.pot
@@ -29,7 +30,7 @@ config.py
 yolov8seg.pt
 # temporary files which can be created if a process still has a handle open of a deleted file
 .fuse_hidden*
-
+test_merger.py
 # KDE directory preferences
 .directory
 
@@ -225,3 +226,31 @@ ENV/
 /site
 
 # End of https://www.gitignore.io/api/macos,linux,django,python,pycharm
+
+/cpp
+setup.py
+bad_logs.py
+/docker_microservices
+/vcpkg
+render_test.py
+segmenttion_imitation.py
+sort_logs.py
+test_parser.py
+tester.py
+dublicate_pipeline2.py
+demo_pipeline.py
+/segmentator_results
+seg_demo.py
+/GeoSeg
+/benchmark_output
+/merge_output
+/pipeline_output
+/vcpkg
+dome_general.py
+formula_extractor.py
+test_render.py
+segmentation_test.py
+seg+ocr+zagl.py
+rtree_comparison.py
+*.pth
+*.pt

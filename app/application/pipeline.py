@@ -1,10 +1,10 @@
 from app.infrastructure.providers import create_formula_service
 from app.infrastructure.providers import create_ocr_client
-from app.infrastructure.merge.ocr_json_normalizer import ocr_json_to_page
-from app.infrastructure.merge.formulas_normalizer import normalize_formulas
-from app.infrastructure.merge.merge_jsons import merge
-from app.infrastructure.pdf.serializer import render_page_to_pdf
-from app.infrastructure.merge.coordinate_normalizer import rescale_formulas
+from app.infrastructure.merge.deprecated.ocr_json_normalizer import ocr_json_to_page
+from app.infrastructure.merge.deprecated.formulas_normalizer import normalize_formulas
+from app.infrastructure.merge.deprecated.merge_jsons import merge
+from app.infrastructure.pdf.deprecated.old_pdf_render import render_page_to_pdf
+from app.infrastructure.merge.deprecated.coordinate_normalizer import rescale_formulas
 from PyPDF2 import PdfReader, PdfWriter
 import asyncio
 import io
