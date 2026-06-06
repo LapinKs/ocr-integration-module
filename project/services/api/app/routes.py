@@ -5,7 +5,8 @@ import json
 import sys
 from pathlib import Path
 from typing import List, Tuple, Optional, Union
-from datetime import datetime
+import httpx
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -224,47 +225,88 @@ async def health_check():
 
     return checks
 
+
 @router.get("/statistics")
-async def get_statistics():
-    try:
-        task_keys = redis_client.keys("task:*")
-        pages = []
+async def get_statistics(
+    task_id: Optional[str] = None,
+    hours: int = 168
+):
 
-        for task_key in task_keys:
-            task_id = task_key.decode() if isinstance(task_key, bytes) else task_key
-            task_id = task_id.replace("task:", "")
+    result = {
+        "generated_at": datetime.now().isoformat(),
+        "pages": []
+    }
 
-            total_pages = int(redis_client.hget(f"task:{task_id}", "total_pages") or 0)
+    prometheus_url = "http://prometheus:9090"
 
-            for i in range(total_pages):
-                page_status = redis_client.hget(f"page:{task_id}:{i}", "status") or b"pending"
-                total_formulas = int(redis_client.hget(f"page:{task_id}:{i}", "total_formulas") or 0)
-                recognized_count = int(redis_client.hget(f"page:{task_id}:{i}", "recognized_count") or 0)
-                merged_count = int(redis_client.hget(f"page:{task_id}:{i}", "merged_count") or 0)
-                started_at = redis_client.hget(f"page:{task_id}:{i}", "started_at")
-                completed_at = redis_client.hget(f"page:{task_id}:{i}", "completed_at")
+    label_filter = f'{{task_id="{task_id}"}}' if task_id else ""
 
-                pages.append({
-                    "task_id": task_id,
-                    "page_index": i,
-                    "status": page_status.decode() if isinstance(page_status, bytes) else str(page_status),
-                    "total_formulas": total_formulas,
-                    "formulas_recognized": recognized_count,
-                    "formulas_merged": merged_count,
-                    "started_at": started_at.decode() if isinstance(started_at, bytes) else started_at,
-                    "completed_at": completed_at.decode() if isinstance(completed_at, bytes) else completed_at
-                })
+    metric_queries = {
+        "segmentation_time": f'segmentation_time_seconds{label_filter}',
+        "recognition_time": f'recognition_time_seconds{label_filter}',
+        "ocr_time": f'ocr_time_seconds{label_filter}',
+        "merge_time": f'merge_time_seconds{label_filter}',
+        "pdf_time": f'pdf_time_seconds{label_filter}',
+        "formulas_found": f'segmentation_formulas_found{label_filter}',
+        "formulas_recognized": f'recognition_formulas_processed{label_filter}',
+    }
 
-        pages.sort(key=lambda x: x.get("started_at", ""), reverse=True)
+    pages_dict = {}
 
-        return {
-            "total_pages": len(pages),
-            "pages": pages,
-            "generated_at": datetime.now().isoformat()
-        }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for metric_name, query in metric_queries.items():
+            try:
+                end_time = datetime.now()
+                start_time = end_time - timedelta(hours=hours)
 
-    except Exception as e:
-        print(f"[Statistics] Error: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(500, f"Failed to get statistics: {str(e)}")
+                response = await client.get(
+                    f"{prometheus_url}/api/v1/query_range",
+                    params={
+                        "query": query,
+                        "start": start_time.isoformat(),
+                        "end": end_time.isoformat(),
+                        "step": "3600s"
+                    },
+                    timeout=30.0
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("status") == "success":
+                        for result_item in data.get("data", {}).get("result", []):
+                            metric = result_item.get("metric", {})
+                            tid = metric.get("task_id")
+                            page_idx = metric.get("page_index")
+
+                            if not tid or page_idx is None:
+                                continue
+
+                            key = f"{tid}:{page_idx}"
+                            if key not in pages_dict:
+                                pages_dict[key] = {
+                                    "task_id": tid,
+                                    "page_index": int(page_idx),
+                                    "segmentation_time": None,
+                                    "recognition_time": None,
+                                    "ocr_time": None,
+                                    "merge_time": None,
+                                    "pdf_time": None,
+                                    "formulas_found": None,
+                                    "formulas_recognized": None
+                                }
+
+                            values = result_item.get("values", [])
+                            if values:
+                                last_value = float(values[-1][1]) if len(values[-1]) > 1 else None
+                                if last_value is not None:
+                                    pages_dict[key][metric_name] = round(last_value, 3)
+
+            except Exception as e:
+                print(f"[Statistics] Prometheus error for {metric_name}: {e}")
+
+    pages = list(pages_dict.values())
+    pages.sort(key=lambda x: (x["task_id"], x["page_index"]), reverse=True)
+
+    result["pages"] = pages[:500]
+
+    return result
