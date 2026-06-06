@@ -1,4 +1,3 @@
-"""BBox utilities for merge operations."""
 import numpy as np
 from typing import Tuple
 from shared.domain.node import Node
@@ -9,6 +8,7 @@ class BBoxUtils:
     @staticmethod
     def intersects(b1: BBox, b2: BBox) -> bool:
         return not (b1.x2 <= b2.x1 or b1.x1 >= b2.x2 or b1.y2 <= b2.y1 or b1.y1 >= b2.y2)
+
 
     @staticmethod
     def intersection_area(b1: BBox, b2: BBox) -> int:

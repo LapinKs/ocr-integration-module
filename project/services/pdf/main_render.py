@@ -14,19 +14,17 @@ mpl.use('Agg')
 mpl.rcParams['mathtext.fontset'] = 'stix'
 import matplotlib.pyplot as plt
 import numpy as np
+
 DRAW_FORMULA_BORDER = False
 DRAW_FORMULA_PLACEHOLDER = False
 DRAW_PICTURES = False
-DRAW_TABLES = True
+DRAW_TABLES = False
 DRAW_TABLE_CELL_BACKGROUND = False
+DRAW_WORD_BBOX = False
+
 DEFAULT_FONT = "DejaVu"
 FONT_PATH = Path(__file__).parent.parent.parent / "fonts" / "DejaVuSans.ttf"
 pdfmetrics.registerFont(TTFont("DejaVu", str(FONT_PATH)))
-# if FONT_PATH.exists():
-#     pdfmetrics.registerFont(TTFont("DejaVu", str(FONT_PATH)))
-#     DEFAULT_FONT = "DejaVu"
-# else:
-#     DEFAULT_FONT = "Helvetica"
 
 mpl.rcParams["text.usetex"] = True
 mpl.rcParams["text.latex.preamble"] = r"""
@@ -94,6 +92,20 @@ class TreePDFRenderer:
             for child in node.children:
                 self._render_node(c, child)
 
+    def _render_word_bbox(self, c: canvas.Canvas, word_node):
+
+        x = self.offset_x + word_node.bbox.x1 * self.scale
+        y = self.offset_y + (self.page_height - word_node.bbox.y2) * self.scale
+        w = (word_node.bbox.x2 - word_node.bbox.x1) * self.scale
+        h = (word_node.bbox.y2 - word_node.bbox.y1) * self.scale
+
+
+        c.setStrokeColorRGB(1, 0, 0)
+        c.setLineWidth(1)
+        c.rect(x, y, w, h)
+        c.setStrokeColorRGB(0, 0, 0)
+
+
     def _render_word(self, c: canvas.Canvas, word_node):
         text = word_node.data.get("#text", "")
         if not text:
@@ -101,7 +113,13 @@ class TreePDFRenderer:
 
         x = self.offset_x + word_node.bbox.x1 * self.scale
         y = self.offset_y + (self.page_height - word_node.bbox.y2) * self.scale
-
+        if DRAW_WORD_BBOX:
+            w = (word_node.bbox.x2 - word_node.bbox.x1) * self.scale
+            h = (word_node.bbox.y2 - word_node.bbox.y1) * self.scale
+            c.setStrokeColorRGB(0, 1, 0)
+            c.setLineWidth(1)
+            c.rect(x, y, w, h)
+            c.setStrokeColorRGB(0, 0, 0)
         word_width_px = word_node.bbox.x2 - word_node.bbox.x1
         bbox_w = word_width_px * self.scale
         font_size = max(6, int(bbox_w / max(len(text), 1) * 1.3))
@@ -110,34 +128,18 @@ class TreePDFRenderer:
         c.setFont("DejaVu", font_size)
         c.drawString(x, y, text)
 
+
     def _render_textline(self, c: canvas.Canvas, line_node):
         if not line_node.children:
             return
-
         words = sorted([w for w in line_node.children if w.type == "RIL_WORD"],
                     key=lambda w: w.bbox.x1)
-
         if not words:
             return
+        for word in words:
+            if word.type == "RIL_WORD":
+                self._render_word(c, word)
 
-        first_x = words[0].bbox.x1
-        all_aligned = all(abs(w.bbox.x1 - first_x) < 10 for w in words)
-
-        if all_aligned:
-            text = " ".join(w.data.get("#text", "") for w in words)
-            x = self.offset_x + line_node.bbox.x1 * self.scale
-            y = self.offset_y + (self.page_height - line_node.bbox.y2) * self.scale
-
-            bbox_w = (line_node.bbox.x2 - line_node.bbox.x1) * self.scale
-            font_size = max(6, int(bbox_w / max(len(text), 1) * 1.4))
-
-            c.setFillColorRGB(0, 0, 0)
-            c.setFont("DejaVu", font_size)
-            c.drawString(x, y, text)
-        else:
-            for word in words:
-                if word.type == "RIL_WORD":
-                    self._render_word(c, word)
 
     def _render_mask_overlay(self, mask: np.ndarray) -> Image.Image:
         from PIL import Image
@@ -146,18 +148,13 @@ class TreePDFRenderer:
         rgba[..., 3] = (mask > 0) * 120
         return Image.fromarray(rgba, 'RGBA')
 
+
     def _render_formula(self, c: canvas.Canvas, formula_node):
         x = self.offset_x + formula_node.bbox.x1 * self.scale
         y = self.offset_y + (self.page_height - formula_node.bbox.y2) * self.scale
         w = (formula_node.bbox.x2 - formula_node.bbox.x1) * self.scale
         h = (formula_node.bbox.y2 - formula_node.bbox.y1) * self.scale
-
-        # c.setStrokeColorRGB(1, 0, 0)
-        # c.setLineWidth(1)
-        # c.rect(x, y, w, h)
-
         mask = formula_node.data.get("mask")
-
         if mask is not None:
             img = self._render_mask_overlay(mask)
             c.drawImage(
@@ -168,16 +165,12 @@ class TreePDFRenderer:
                 height=self.page_height * self.scale,
                 mask='auto'
             )
-
         latex = formula_node.data.get('latex') or formula_node.data.get('LaTeX')
 
         if latex:
             try:
                 img = self._render_latex_block(latex)
                 if DRAW_FORMULA_BORDER:
-                    # c.setStrokeColorRGB(1, 0, 0)
-                    # c.setLineWidth(1)
-                    # c.rect(x, y, w, h)
                     c.setStrokeColorRGB(0, 0, 0)
                 c.drawImage(
                     ImageReader(img),
@@ -196,13 +189,6 @@ class TreePDFRenderer:
 
     def _render_formula_placeholder(self, c: canvas.Canvas, x: float, y: float,
                                      w: float, h: float, latex: str = None):
-        # c.setStrokeColorRGB(1, 0, 0)
-        # c.setLineWidth(1)
-        # c.rect(x, y, w, h)
-
-        # c.setFillColorRGB(0.95, 0.95, 0.95)
-        # c.rect(x, y, w, h, fill=1)
-
         c.setFillColorRGB(0, 0, 0)
         c.setFont("DejaVu", 10)
 
@@ -238,6 +224,7 @@ class TreePDFRenderer:
         buf.seek(0)
         return Image.open(buf)
 
+
     def _render_table(self, c: canvas.Canvas, table_node):
         x = self.offset_x + table_node.bbox.x1 * self.scale
         y = self.offset_y + (self.page_height - table_node.bbox.y2) * self.scale
@@ -252,6 +239,7 @@ class TreePDFRenderer:
         for cell in cells:
             self._render_node(c, cell)
 
+
     def _render_table_cell(self, c: canvas.Canvas, cell_node):
         x = self.offset_x + cell_node.bbox.x1 * self.scale
         y = self.offset_y + (self.page_height - cell_node.bbox.y2) * self.scale
@@ -264,6 +252,7 @@ class TreePDFRenderer:
 
         for child in cell_node.children:
             self._render_node(c, child)
+
 
     def _render_picture(self, c: canvas.Canvas, picture_node):
         x = self.offset_x + picture_node.bbox.x1 * self.scale
@@ -291,7 +280,6 @@ def render_page_to_pdf(page_node, page_width: int, page_height: int) -> bytes:
 def render_legacy_page_to_pdf(page) -> bytes:
     from app.infrastructure.merge.domain.node import Node
     from app.infrastructure.merge.domain.bbox import BBox
-
     page_node = Node(
         type="RIL_PAGE",
         bbox=BBox(0, 0, page.width, page.height),

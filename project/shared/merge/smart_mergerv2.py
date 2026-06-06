@@ -8,12 +8,14 @@ from .node import Node
 from .bbox import BBox
 import numpy as np
 
+
 class AdaptiveSpatialIndex:
     def __init__(self, lines: List[Node]):
         self.lines = lines
         self.n = len(lines)
         self.last_idx = 0
         self.history = []
+
 
     def query(self, bbox: Tuple[int, int, int, int]) -> List[Node]:
         x1, y1, x2, y2 = bbox
@@ -33,6 +35,7 @@ class AdaptiveSpatialIndex:
             if len(self.history) > 10:
                 self.history.pop(0)
         return result
+
 
     def _find_start_galloping(self, y1: int) -> int:
         idx = self.last_idx
@@ -55,6 +58,7 @@ class AdaptiveSpatialIndex:
             else:
                 right = mid
         return left
+
 
     def _find_end_galloping(self, start_idx: int, y2: int) -> int:
         if start_idx >= self.n:
@@ -85,6 +89,7 @@ class SpatialIndex:
         self.y_index = []
         self._build_index()
 
+
     def _build_index(self):
         def collect(node: Node):
             if node.type in self.include_types:
@@ -95,6 +100,7 @@ class SpatialIndex:
         self.flat_objects.sort(key=lambda n: n.bbox.y1)
         self.y_index = [(n.bbox.y1, n.bbox.y2, i) for i, n in enumerate(self.flat_objects)]
         self.y_index.sort(key=lambda x: x[0])
+
 
     def query(self, bbox: Tuple[int, int, int, int]) -> List[Node]:
         x1, y1, x2, y2 = bbox
@@ -113,6 +119,7 @@ class BBoxUtils:
     def intersects(b1: BBox, b2: BBox) -> bool:
         return not (b1.x2 <= b2.x1 or b1.x1 >= b2.x2 or b1.y2 <= b2.y1 or b1.y1 >= b2.y2)
 
+
     @staticmethod
     def intersection_area(b1: BBox, b2: BBox) -> int:
         if not BBoxUtils.intersects(b1, b2):
@@ -125,29 +132,6 @@ class BBoxUtils:
 
 
 class MaskUtils:
-    # @staticmethod
-    # def word_intersects_mask(word: Node, formula_bbox: Tuple[int, int, int, int],
-    #                           formula_mask: np.ndarray) -> bool:
-    #     if formula_mask is None:
-    #         fx1, fy1, fx2, fy2 = formula_bbox
-    #         wx1, wy1, wx2, wy2 = word.bbox.x1, word.bbox.y1, word.bbox.x2, word.bbox.y2
-    #         return (wx1 < fx2 and wx2 > fx1 and wy1 < fy2 and wy2 > fy1)
-    #     mask_h, mask_w = formula_mask.shape
-    #     fx1, fy1, fx2, fy2 = formula_bbox
-    #     wx1 = max(0, int(word.bbox.x1))
-    #     wy1 = max(0, int(word.bbox.y1))
-    #     wx2 = min(mask_w, int(word.bbox.x2))
-    #     wy2 = min(mask_h, int(word.bbox.y2))
-    #     if wx2 <= wx1 or wy2 <= wy1:
-    #         return False
-    #     submask = formula_mask[wy1:wy2, wx1:wx2]
-    #     if submask.size == 0:
-    #         return False
-    #     import numpy as np
-    #     intersection = np.count_nonzero(submask)
-    #     area = (wx2 - wx1) * (wy2 - wy1)
-    #     ratio = intersection / max(area, 1)
-    #     return ratio > 0.15 or intersection > 15
     @staticmethod
     def word_intersects_mask(
         word: Node,
@@ -164,13 +148,11 @@ class MaskUtils:
 
         fx1, fy1, fx2, fy2 = formula_bbox
 
-        # WORD bbox в координатах страницы
         wx1 = word.bbox.x1
         wy1 = word.bbox.y1
         wx2 = word.bbox.x2
         wy2 = word.bbox.y2
 
-        # Проверка bbox пересечения сначала
         ix1 = max(wx1, fx1)
         iy1 = max(wy1, fy1)
         ix2 = min(wx2, fx2)
@@ -179,7 +161,6 @@ class MaskUtils:
         if ix2 <= ix1 or iy2 <= iy1:
             return False
 
-        # ПЕРЕВОД В ЛОКАЛЬНЫЕ КООРДИНАТЫ МАСКИ
         local_x1 = int(ix1 - fx1)
         local_y1 = int(iy1 - fy1)
         local_x2 = int(ix2 - fx1)
@@ -191,21 +172,14 @@ class MaskUtils:
         local_x2 = max(0, min(local_x2, mask_w))
         local_y1 = max(0, min(local_y1, mask_h))
         local_y2 = max(0, min(local_y2, mask_h))
-
         if local_x2 <= local_x1 or local_y2 <= local_y1:
             return False
-
         submask = formula_mask[local_y1:local_y2, local_x1:local_x2]
-
         if submask.size == 0:
             return False
-
         intersection = np.count_nonzero(submask)
-
         area = submask.shape[0] * submask.shape[1]
-
         ratio = intersection / max(area, 1)
-
         return ratio > threshold_ratio
 
 
@@ -224,6 +198,7 @@ class BBoxUpdater:
         line.bbox = BBox(min_x, min_y, max_x, max_y)
         BBoxUpdater.update_parent_bbox(line.parent)
 
+
     @staticmethod
     def update_parent_bbox(parent: Node):
         if not parent or not parent.children:
@@ -238,35 +213,9 @@ class BBoxUpdater:
 
 
 class TreeCleaner:
-    # @staticmethod
-    # def clean_line_words(line: Node, formula_bbox: Tuple[int, int, int, int],
-    #                      formula_mask: np.ndarray = None):
-    #     new_children = []
-    #     fx1, fy1, fx2, fy2 = formula_bbox
-
-    #     for child in line.children:
-    #         if child.type == "RIL_WORD":
-    #             if formula_mask is not None:
-    #                 if not MaskUtils.word_intersects_mask(child, formula_bbox, formula_mask):
-    #                     new_children.append(child)
-    #             else:
-    #                 if not (child.bbox.x1 < fx2 and child.bbox.x2 > fx1 and
-    #                         child.bbox.y1 < fy2 and child.bbox.y2 > fy1):
-    #                     new_children.append(child)
-    #         else:
-    #             new_children.append(child)
-
-    #     line.children = new_children
-
-    #     if line.children:
-    #         BBoxUpdater.update_line_bbox(line, on_empty_remove=False)
-    #     elif line.parent:
-    #         BBoxUpdater.update_line_bbox(line, on_empty_remove=True)
-
     @staticmethod
     def clean_line_words(line: Node, formula_bbox: Tuple[int, int, int, int],
                         formula_mask: np.ndarray = None) -> bool:
-        """Возвращает True, если линия стала пустой и была удалена"""
         fx1, fy1, fx2, fy2 = formula_bbox
         words_to_remove = []
 
@@ -284,21 +233,19 @@ class TreeCleaner:
                 if intersects:
                     words_to_remove.append(child)
 
-        # Удаляем слова
         for word in words_to_remove:
             if word in line.children:
                 line.children.remove(word)
 
-        # Обновляем или удаляем линию
         if line.children:
             BBoxUpdater.update_line_bbox(line, on_empty_remove=False)
             return False
         else:
-            # Линия пуста - удаляем её
             if line.parent and line in line.parent.children:
                 line.parent.children.remove(line)
                 BBoxUpdater.update_parent_bbox(line.parent)
             return True
+
 
     @staticmethod
     def clean_table(table: Node, formula_bbox: Tuple[int, int, int, int]):
@@ -314,10 +261,13 @@ class TreeCleaner:
         if not table.children and table.parent:
             table.parent.children.remove(table)
 
+
     @staticmethod
     def clean_picture(picture: Node):
         if picture.parent:
             picture.parent.children.remove(picture)
+
+
     @staticmethod
     def clean_list_item(item: Node, formula_bbox: Tuple[int, int, int, int]):
         fx1, fy1, fx2, fy2 = formula_bbox
@@ -338,6 +288,7 @@ class TreeCleaner:
             item.bbox = BBox(min_x, min_y, max_x, max_y)
         elif item.parent:
             item.parent.children.remove(item)
+
 
     @staticmethod
     def clean_text_container(node: Node, formula_bbox: Tuple[int, int, int, int]):
@@ -360,11 +311,11 @@ class TreeCleaner:
         elif node.parent:
             node.parent.children.remove(node)
 
+
     @staticmethod
     def clean_picture_with_ratio(picture: Node, formula_bbox: Tuple[int, int, int, int],
                                   min_overlap_ratio: float = 0.1) -> bool:
         fx1, fy1, fx2, fy2 = formula_bbox
-
         ix1 = max(picture.bbox.x1, fx1)
         iy1 = max(picture.bbox.y1, fy1)
         ix2 = min(picture.bbox.x2, fx2)
@@ -373,7 +324,6 @@ class TreeCleaner:
         if ix2 > ix1 and iy2 > iy1:
             overlap_area = (ix2 - ix1) * (iy2 - iy1)
             picture_area = picture.bbox.area
-
             if picture_area > 0 and overlap_area / picture_area > min_overlap_ratio:
                 if picture.parent:
                     picture.parent.children.remove(picture)
@@ -396,6 +346,7 @@ class TreeInserter:
         formula_node.parent = line
         BBoxUpdater.update_line_bbox(line)
 
+
     @staticmethod
     def insert_between_lines(parent: Node, lines: List[Node], formula_node: Node):
         if lines and lines[-1] in parent.children:
@@ -406,6 +357,7 @@ class TreeInserter:
         else:
             parent.add_child(formula_node)
             BBoxUpdater.update_parent_bbox(parent)
+
 
     @staticmethod
     def insert_as_block(tree: Node, formula_node: Node):
@@ -441,19 +393,34 @@ class TreeMerger:
         self.use_adaptive_index = use_adaptive_index
         self.spatial_index = None
         self.adaptive_index = None
+        self._current_tree_id = None
 
+
+    def _get_or_build_index(self, tree: Node) -> SpatialIndex:
+        tree_id = id(tree)
+
+        if self.spatial_index is not None and self._current_tree_id == tree_id:
+            return self.spatial_index
+
+        include_types = [
+            "RIL_TEXTLINE", "RIL_WORD", "RIL_SYMBOL",
+            "RIL_TABLE", "RIL_TABLE_CELL", "RIL_LTABLE",
+            "RIL_PICTURE", "RIL_LIST_ITEM", "RIL_CAPTION",
+            "RIL_FOOTNOTE", "RIL_TITLE", "RIL_SECTION_HEADER",
+            "RIL_PAGE_HEADER", "RIL_PAGE_FOOTER", "RIL_FORMULA"
+        ]
+        self.spatial_index = SpatialIndex(tree, include_types=include_types)
+        self._current_tree_id = tree_id
+        return self.spatial_index
 
 
     def merge_page(self, tree: Node, formulas: List[Dict], use_mask: bool = False) -> Node:
         import time
-
         t0 = time.time()
-        lines = tree.get_text_lines()
-        if self.use_adaptive_index and len(lines) > 0:
-            self.adaptive_index = AdaptiveSpatialIndex(lines)
-        else:
-            self.spatial_index = SpatialIndex(tree)
+        self._get_or_build_index(tree)
+
         index_time = (time.time() - t0) * 1000
+        print(f"   [MERGE] SpatialIndex готов за {index_time:.2f}мс")
 
         formula_times = []
         for f in formulas:
@@ -461,7 +428,8 @@ class TreeMerger:
             formula_node = FormulaNodeBuilder.create_node(
                 f['id'], f['bbox'], f.get('latex'), f.get('recognition_status', 'pending')
             )
-            self._merge_one_formula(tree, formula_node, f.get('mask'), use_mask)
+
+            self._merge_one_formula_fast(tree, formula_node, f.get('mask'), use_mask)
             formula_times.append((time.time() - tf0) * 1000)
 
         t0 = time.time()
@@ -472,27 +440,15 @@ class TreeMerger:
         print(f"   [MERGE STATS] Среднее на формулу: {sum(formula_times)/len(formula_times):.2f} мс")
         print(f"   [MERGE STATS] Min/Max: {min(formula_times):.2f}/{max(formula_times):.2f} мс")
         print(f"   [MERGE STATS] Сортировка: {sort_time:.2f} мс")
-
         return tree
 
 
-
-    def _merge_one_formula(self, tree: Node, formula_node: Node,
-                            formula_mask: np.ndarray, use_mask: bool):
-        include_types = [
-            "RIL_TEXTLINE", "RIL_WORD", "RIL_SYMBOL",
-            "RIL_TABLE", "RIL_TABLE_CELL", "RIL_LTABLE",
-            "RIL_PICTURE", "RIL_LIST_ITEM", "RIL_CAPTION",
-            "RIL_FOOTNOTE", "RIL_TITLE", "RIL_SECTION_HEADER",
-            "RIL_PAGE_HEADER", "RIL_PAGE_FOOTER", "RIL_FORMULA"
-        ]
-
-        self.spatial_index = SpatialIndex(tree, include_types=include_types)
-
+    def _merge_one_formula_fast(self, tree: Node, formula_node: Node,
+                                 formula_mask: np.ndarray, use_mask: bool):
+        spatial_idx = self._get_or_build_index(tree)
         fx1, fy1, fx2, fy2 = formula_node.bbox.x1, formula_node.bbox.y1, formula_node.bbox.x2, formula_node.bbox.y2
         formula_bbox = (fx1, fy1, fx2, fy2)
-
-        candidates = self.spatial_index.query(formula_bbox)
+        candidates = spatial_idx.query(formula_bbox)
 
         text_lines = []
         other_nodes = []
@@ -502,7 +458,7 @@ class TreeMerger:
             else:
                 other_nodes.append(node)
 
-        # Обрабатываем нетекстовые узлы
+
         for node in other_nodes:
             self._handle_non_text_node(node, formula_node, formula_mask, use_mask)
 
@@ -510,13 +466,10 @@ class TreeMerger:
             TreeInserter.insert_as_block(tree, formula_node)
             return
 
-        # УДАЛЯЕМ ПЕРЕСЕКАЮЩИЕСЯ СЛОВА И СОБИРАЕМ ЛИНИИ, ГДЕ БЫЛИ УДАЛЕНИЯ
         lines_with_changes = []
         for line in text_lines:
-            has_intersection = False
             words_to_remove = []
 
-            # Сначала проверяем все слова в линии
             for word in line.children:
                 if word.type != "RIL_WORD":
                     continue
@@ -530,112 +483,45 @@ class TreeMerger:
                         intersects = True
 
                 if intersects:
-                    has_intersection = True
                     words_to_remove.append(word)
 
-            # Удаляем пересекающиеся слова
             if words_to_remove:
                 for word in words_to_remove:
                     if word in line.children:
                         line.children.remove(word)
                 lines_with_changes.append(line)
 
-                # Обновляем bbox линии после удаления слов
                 if line.children:
                     BBoxUpdater.update_line_bbox(line, on_empty_remove=False)
                 else:
-                    # Линия стала пустой - удаляем её
                     if line.parent and line in line.parent.children:
                         line.parent.children.remove(line)
                         BBoxUpdater.update_parent_bbox(line.parent)
 
-        # Теперь определяем, какие линии остались после удаления
-        # (не пустые и всё ещё существуют в дереве)
+
         remaining_lines = []
         for line in lines_with_changes:
-            # Проверяем, существует ли линия ещё в дереве (не была удалена)
             if line.parent and line in line.parent.children and line.children:
                 remaining_lines.append(line)
 
-        # ВСТАВКА ФОРМУЛЫ
+
         if len(remaining_lines) == 1:
-            # Вставляем в оставшуюся линию
             self._insert_inline(remaining_lines[0], formula_node)
         elif len(remaining_lines) > 1:
-            # Вставляем между линиями, если у них общий родитель
             parent_ids = set(id(line.parent) for line in remaining_lines if line.parent)
             if len(parent_ids) == 1 and remaining_lines[0].parent:
                 TreeInserter.insert_between_lines(remaining_lines[0].parent, remaining_lines, formula_node)
             else:
                 TreeInserter.insert_as_block(tree, formula_node)
         else:
-            # Нет подходящих линий - вставляем как блок
             TreeInserter.insert_as_block(tree, formula_node)
 
 
-    # def _merge_one_formula(self, tree: Node, formula_node: Node,
-    #                     formula_mask: np.ndarray, use_mask: bool):
-    #     include_types = [
-    #         "RIL_TEXTLINE", "RIL_WORD", "RIL_SYMBOL",
-    #         "RIL_TABLE", "RIL_TABLE_CELL", "RIL_LTABLE",
-    #         "RIL_PICTURE", "RIL_LIST_ITEM", "RIL_CAPTION",
-    #         "RIL_FOOTNOTE", "RIL_TITLE", "RIL_SECTION_HEADER",
-    #         "RIL_PAGE_HEADER", "RIL_PAGE_FOOTER", "RIL_FORMULA"
-    #     ]
 
-    #     self.spatial_index = SpatialIndex(tree, include_types=include_types)
-
-    #     fx1, fy1, fx2, fy2 = formula_node.bbox.x1, formula_node.bbox.y1, formula_node.bbox.x2, formula_node.bbox.y2
-    #     formula_center_y = (fy1 + fy2) / 2
-
-    #     candidates = self.spatial_index.query((fx1, fy1, fx2, fy2))
-
-    #     text_lines = []
-    #     other_nodes = []
-    #     for node in candidates:
-    #         if node.type == "RIL_TEXTLINE":
-    #             text_lines.append(node)
-    #         else:
-    #             other_nodes.append(node)
-
-    #     for node in other_nodes:
-    #         self._handle_non_text_node(node, formula_node, formula_mask, use_mask)
-
-    #     if not text_lines:
-    #         TreeInserter.insert_as_block(tree, formula_node)
-    #         return
-
-    #     intersecting_lines = []
-    #     for line in text_lines:
-    #         has_intersection = False
-    #         for word in line.children:
-    #             if word.type != "RIL_WORD":
-    #                 continue
-    #             if use_mask and formula_mask is not None:
-    #                 if MaskUtils.word_intersects_mask(word, (fx1, fy1, fx2, fy2), formula_mask):
-    #                     has_intersection = True
-    #                     break
-    #             else:
-    #                 if BBoxUtils.intersects(word.bbox, formula_node.bbox):
-    #                     has_intersection = True
-    #                     break
-    #         if has_intersection:
-    #             intersecting_lines.append(line)
-    #             TreeCleaner.clean_line_words(line, (fx1, fy1, fx2, fy2), formula_mask if use_mask else None)
-
-    #     remaining_lines = [line for line in intersecting_lines if line in tree.get_text_lines()]
-
-    #     if len(remaining_lines) == 1:
-    #         self._insert_inline(remaining_lines[0], formula_node)
-    #     elif len(remaining_lines) > 1:
-    #         parent_ids = set(id(line.parent) for line in remaining_lines if line.parent)
-    #         if len(parent_ids) == 1 and remaining_lines[0].parent:
-    #             TreeInserter.insert_between_lines(remaining_lines[0].parent, remaining_lines, formula_node)
-    #         else:
-    #             TreeInserter.insert_as_block(tree, formula_node)
-    #     else:
-    #         TreeInserter.insert_as_block(tree, formula_node)
-
+    def _merge_one_formula(self, tree: Node, formula_node: Node,
+                            formula_mask: np.ndarray, use_mask: bool):
+        self._current_tree_id = None
+        return self._merge_one_formula_fast(tree, formula_node, formula_mask, use_mask)
 
     def _handle_non_text_node(self, node: Node, formula_node: Node,
                             formula_mask: np.ndarray, use_mask: bool):
@@ -664,7 +550,6 @@ class TreeMerger:
                     formula_node.parent = node.parent
                     BBoxUpdater.update_parent_bbox(node.parent)
                 except ValueError:
-                    # Если узел не найден, просто добавляем как новый
                     if node.parent:
                         node.parent.add_child(formula_node)
                     BBoxUpdater.update_parent_bbox(node.parent)
@@ -673,34 +558,6 @@ class TreeMerger:
         else:
             pass
 
-    # def _handle_non_text_node(self, node: Node, formula_node: Node,
-    #                         formula_mask: np.ndarray, use_mask: bool):
-    #     formula_bbox = (formula_node.bbox.x1, formula_node.bbox.y1,
-    #                     formula_node.bbox.x2, formula_node.bbox.y2)
-    #     if node.type == "RIL_TABLE":
-    #         TreeCleaner.clean_table(node, formula_bbox)
-    #     elif node.type == "RIL_LTABLE":
-    #         TreeCleaner.clean_table(node, formula_bbox)
-    #     elif node.type == "RIL_TABLE_CELL":
-    #         TreeCleaner.clean_line_words(node, formula_bbox, formula_mask if use_mask else None)
-    #     elif node.type == "RIL_PICTURE":
-    #         TreeCleaner.clean_picture_with_ratio(node, formula_bbox, min_overlap_ratio=0.1)
-    #     elif node.type == "RIL_LIST_ITEM":
-    #         TreeCleaner.clean_list_item(node, formula_bbox)
-    #     elif node.type in ["RIL_CAPTION", "RIL_FOOTNOTE", "RIL_TITLE"]:
-    #         TreeCleaner.clean_text_container(node, formula_bbox)
-    #     elif node.type == "RIL_SECTION_HEADER":
-    #         TreeCleaner.clean_text_container(node, formula_bbox)
-    #     elif node.type == "RIL_FORMULA":
-    #         if node.parent:
-    #             idx = node.parent.children.index(node)
-    #             node.parent.children[idx] = formula_node
-    #             formula_node.parent = node.parent
-    #             BBoxUpdater.update_parent_bbox(node.parent)
-    #     elif node.type in ["RIL_PAGE_HEADER", "RIL_PAGE_FOOTER"]:
-    #         TreeCleaner.clean_text_container(node, formula_bbox)
-    #     else:
-    #         pass
 
     def _insert_inline(self, line: Node, formula_node: Node):
         cx = (formula_node.bbox.x1 + formula_node.bbox.x2) / 2
@@ -716,6 +573,7 @@ class TreeMerger:
         formula_node.parent = line
         BBoxUpdater.update_line_bbox(line)
 
+
     def _sort_tree(self, node: Node):
         if node.type in ["RIL_PAGE", "RIL_TEXT", "RIL_LIST_ITEM", "RIL_SECTION_HEADER"]:
             node.children.sort(key=lambda n: n.bbox.y1)
@@ -723,90 +581,3 @@ class TreeMerger:
             node.children.sort(key=lambda n: n.bbox.x1)
         for child in node.children:
             self._sort_tree(child)
-
-
-
-
-#==========================================================================
-
-
-    # def _merge_one_formula(self, tree: Node, formula_node: Node,
-    #                        formula_mask: np.ndarray, use_mask: bool):
-    #     include_types = [
-    #     "RIL_TEXTLINE", "RIL_WORD", "RIL_SYMBOL",
-    #     "RIL_TABLE", "RIL_TABLE_CELL", "RIL_LTABLE",
-    #     "RIL_PICTURE", "RIL_LIST_ITEM", "RIL_CAPTION",
-    #     "RIL_FOOTNOTE", "RIL_TITLE", "RIL_SECTION_HEADER",
-    #     "RIL_PAGE_HEADER", "RIL_PAGE_FOOTER", "RIL_FORMULA"
-    #     ]
-    #     if self.use_adaptive_index and self.adaptive_index is None:
-    #         pass
-    #     else:
-    #         self.spatial_index = SpatialIndex(tree, include_types=include_types)
-    #     fx1, fy1, fx2, fy2 = formula_node.bbox.x1, formula_node.bbox.y1, formula_node.bbox.x2, formula_node.bbox.y2
-    #     formula_center_y = (fy1 + fy2) / 2
-    #     if self.use_adaptive_index and self.adaptive_index is not None:
-    #         candidates = self.adaptive_index.query((fx1, fy1, fx2, fy2))
-    #     else:
-    #         candidates = self.spatial_index.query((fx1, fy1, fx2, fy2))
-    #     text_lines = []
-    #     other_nodes = []
-    #     for node in candidates:
-    #         if node.type == "RIL_TEXTLINE":
-    #             text_lines.append(node)
-    #         else:
-    #             other_nodes.append(node)
-    #     for node in other_nodes:
-    #         self._handle_non_text_node(node, formula_node, formula_mask, use_mask)
-    #     if not text_lines:
-    #         TreeInserter.insert_as_block(tree, formula_node)
-    #         return
-    #     intersecting_lines = []
-    #     for line in text_lines:
-    #         has_intersection = False
-    #         for word in line.children:
-    #             if word.type != "RIL_WORD":
-    #                 continue
-    #             if use_mask and formula_mask is not None:
-    #                 if MaskUtils.word_intersects_mask(word, (fx1, fy1, fx2, fy2), formula_mask):
-    #                     has_intersection = True
-    #                     break
-    #             else:
-    #                 if BBoxUtils.intersects(word.bbox, formula_node.bbox):
-    #                     has_intersection = True
-    #                     break
-    #         if has_intersection:
-    #             intersecting_lines.append(line)
-    #             TreeCleaner.clean_line_words(line, (fx1, fy1, fx2, fy2), formula_mask if use_mask else None)
-    #     remaining_lines = [line for line in intersecting_lines if line in tree.get_text_lines()]
-    #     if len(remaining_lines) == 1:
-    #         self._insert_inline(remaining_lines[0], formula_node)
-    #     elif len(remaining_lines) > 1:
-    #         parent_ids = set(id(line.parent) for line in remaining_lines if line.parent)
-    #         if len(parent_ids) == 1 and remaining_lines[0].parent:
-    #             TreeInserter.insert_between_lines(remaining_lines[0].parent, remaining_lines, formula_node)
-    #         else:
-    #             TreeInserter.insert_as_block(tree, formula_node)
-    #     else:
-    #         TreeInserter.insert_as_block(tree, formula_node)
-
-
-
-
-    # def merge_page(self, tree: Node, formulas: List[Dict], use_mask: bool = False) -> Node:
-    #     lines = tree.get_text_lines()
-    #     if self.use_adaptive_index and len(lines) > 0:
-    #         self.adaptive_index = AdaptiveSpatialIndex(lines)
-    #     else:
-    #         self.spatial_index = SpatialIndex(tree)
-    #     formula_nodes = []
-    #     for f in formulas:
-    #         formula_node = FormulaNodeBuilder.create_node(
-    #             f['id'], f['bbox'], f.get('latex'), f.get('recognition_status', 'pending')
-    #         )
-    #         formula_nodes.append(formula_node)
-    #         self._merge_one_formula(tree, formula_node, f.get('mask'), use_mask)
-    #     self._sort_tree(tree)
-    #     return tree
-
-#==========================================================================

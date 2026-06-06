@@ -1,0 +1,5 @@
+opencv-python>=4.8.0
+transformers>=4.30.0
+pillow>=10.0.0
+pix2tex>=0.0.10
+munch>=4.0.0

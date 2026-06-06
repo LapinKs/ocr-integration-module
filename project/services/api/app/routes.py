@@ -1,145 +1,148 @@
 import uuid
 import io
-import json
 import os
+import json
+import sys
 from pathlib import Path
-from typing import List
+from typing import List, Tuple, Optional, Union
 from datetime import datetime
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query, BackgroundTasks
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import StreamingResponse, JSONResponse
 
-# Добавляем путь для импорта shared
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from shared.infrastructure.redis_client import get_redis_client, create_redis_client
-from shared.infrastructure.minio_client import get_minio_client, create_minio_client
+from shared.infrastructure.redis_client import create_redis_client
+from shared.infrastructure.minio_client import create_minio_client
+from shared.database.sqlite_client import get_sqlite_client
+from services.task_starter import start_segmentation_task, start_ocr_task
 
 router = APIRouter()
 
-# Инициализация клиентов (будет вызвано при старте)
-redis_client = None
-minio_client = None
+redis_url = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
+minio_endpoint = os.environ.get('MINIO_ENDPOINT', 'minio:9000')
+minio_access = os.environ.get('MINIO_ACCESS_KEY', 'minioadmin')
+minio_secret = os.environ.get('MINIO_SECRET_KEY', 'minioadmin')
 
-def init_clients():
-    global redis_client, minio_client
-    redis_url = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
-    minio_endpoint = os.environ.get('MINIO_ENDPOINT', 'minio:9000')
-    minio_access = os.environ.get('MINIO_ACCESS_KEY', 'minioadmin')
-    minio_secret = os.environ.get('MINIO_SECRET_KEY', 'minioadmin')
-
-    redis_client = create_redis_client(redis_url)
-    minio_client = create_minio_client(minio_endpoint, minio_access, minio_secret)
-
-# Вызываем при первом импорте
-init_clients()
+redis_client = create_redis_client(redis_url)
+minio_client = create_minio_client(minio_endpoint, minio_access, minio_secret)
 
 BUCKET_IMAGES = "source-images"
-BUCKET_OCR = "ocr-results"
-BUCKET_TREES = "merged-trees"
 BUCKET_PDFS = "result-pdfs"
+
+REQUIRED_BUCKETS = ["source-images", "formula-masks", "ocr-results", "merged-trees", "result-pdfs"]
+
+
+def ensure_buckets():
+    for bucket in REQUIRED_BUCKETS:
+        if not minio_client.bucket_exists(bucket):
+            minio_client.make_bucket(bucket)
+            print(f"Created bucket: {bucket}")
+
+ensure_buckets()
+
+
+async def get_task_status(task_id: str) -> Tuple[bool, Optional[dict], Optional[int]]:
+
+    total = redis_client.hget(f"task:{task_id}", "total_pages")
+    if total is None:
+        raise HTTPException(404, f"Task {task_id} not found")
+
+    total_pages = int(total)
+    status = redis_client.hget(f"task:{task_id}", "status")
+    status_str = status.decode() if isinstance(status, bytes) else "pending"
+
+
+    if status_str == "completed":
+        return True, None, total_pages
+
+    pages_completed = 0
+    pages_status = []
+
+    for i in range(total_pages):
+        page_status = redis_client.hget(f"page:{task_id}:{i}", "status") or b"pending"
+        page_status_str = page_status.decode() if isinstance(page_status, bytes) else page_status
+        pages_status.append({"page": i, "status": page_status_str})
+        if page_status_str in ["completed", "merged"]:
+            pages_completed += 1
+
+    status_info = {
+        "task_id": task_id,
+        "status": "pending",
+        "total_pages": total_pages,
+        "pages_completed": pages_completed,
+        "pages": pages_status,
+        "message": "Task is still processing. Please check again later."
+    }
+
+    return False, status_info, total_pages
 
 
 @router.post("/process")
-async def process_document(
-    files: List[UploadFile] = File(..., description="List of images to process"),
-    background_tasks: BackgroundTasks = None
+async def process_images(
+    files: List[UploadFile] = File(..., description="Список изображений (JPG, PNG)")
 ):
-    """Запуск асинхронной обработки документов"""
     task_id = str(uuid.uuid4())
     total_pages = len(files)
 
-    # Сохраняем метаданные задачи в Redis
+    db = get_sqlite_client()
+    await db.create_task(task_id, total_pages)
+
     redis_client.hset(f"task:{task_id}", "total_pages", total_pages)
     redis_client.hset(f"task:{task_id}", "status", "pending")
     redis_client.hset(f"task:{task_id}", "created_at", datetime.now().isoformat())
-    redis_client.hset(f"task:{task_id}", "pages_processed", 0)
 
-    # Сохраняем изображения в MinIO и запускаем задачи
     for i, file in enumerate(files):
+        if not file.content_type or not file.content_type.startswith('image/'):
+            continue
+
         content = await file.read()
 
-        # Сохраняем изображение
         image_path = f"{task_id}/{i}/image.jpg"
         minio_client.put_object(
             BUCKET_IMAGES,
             image_path,
             io.BytesIO(content),
             len(content),
-            content_type="image/jpeg"
+            content_type=file.content_type
         )
 
-        # Запускаем сегментацию
-        from services.segmentation.worker import process_segmentation
-        process_segmentation.delay(task_id, i, content)
+        redis_client.hset(f"page:{task_id}:{i}", "started_at", datetime.now().isoformat())
+        redis_client.hset(f"page:{task_id}:{i}", "status", "pending")
 
-        # Запускаем OCR (через background task или отдельный worker)
-        from services.ocr.worker import process_ocr
-        process_ocr.delay(task_id, i, content)
+        start_segmentation_task(task_id, i, content)
+        start_ocr_task(task_id, i, content)
 
     return {
         "task_id": task_id,
         "total_pages": total_pages,
         "status": "pending",
-        "message": "Processing started. Use /task/{task_id}/status to check progress"
+        "message": f"Get result at /result/{task_id}/pdf or /result/{task_id}/json"
     }
 
 
-@router.get("/task/{task_id}/status")
-async def get_task_status(task_id: str):
-    """Получение статуса задачи"""
-    # Проверяем существование задачи
-    total = redis_client.hget(f"task:{task_id}", "total_pages")
-    if total is None:
-        raise HTTPException(404, f"Task {task_id} not found")
+@router.get("/result/{task_id}/pdf")
+async def get_result_pdf(task_id: str):
+    is_ready, status_info, total_pages = await get_task_status(task_id)
 
-    total_pages = int(total)
-    pages_processed = int(redis_client.hget(f"task:{task_id}", "pages_processed") or 0)
-    status = redis_client.hget(f"task:{task_id}", "status") or b"pending"
+    if not is_ready:
+        return JSONResponse(
+            status_code=200,
+            content=status_info
+        )
 
-    # Собираем статус по страницам
-    pages_status = []
-    for i in range(total_pages):
-        page_status = redis_client.hget(f"page:{task_id}:{i}", "status") or b"pending"
-        page_status_str = page_status.decode() if isinstance(page_status, bytes) else page_status
-
-        pages_status.append({
-            "page": i,
-            "status": page_status_str
-        })
-
-    return {
-        "task_id": task_id,
-        "status": status.decode() if isinstance(status, bytes) else status,
-        "total_pages": total_pages,
-        "pages_processed": pages_processed,
-        "pages": pages_status,
-        "created_at": redis_client.hget(f"task:{task_id}", "created_at")
-    }
-
-
-@router.get("/task/{task_id}/result")
-async def get_task_result(task_id: str):
-    """Скачивание результата (PDF)"""
-    status = redis_client.hget(f"task:{task_id}", "status")
-    if status is None:
-        raise HTTPException(404, f"Task {task_id} not found")
-
-    status_str = status.decode() if isinstance(status, bytes) else status
-    if status_str != "completed":
-        raise HTTPException(400, f"Task not completed yet. Current status: {status_str}")
-
-    # Загружаем объединённый PDF или собираем по страницам
     try:
-        # Пытаемся загрузить объединённый PDF
         pdf_path = f"{task_id}/result.pdf"
         pdf_data = minio_client.get_object(BUCKET_PDFS, pdf_path)
         pdf_bytes = pdf_data.read()
         pdf_data.close()
-    except:
-        # Если нет объединённого PDF, собираем постранично
-        total_pages = int(redis_client.hget(f"task:{task_id}", "total_pages") or 0)
+
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=result_{task_id}.pdf"}
+        )
+    except Exception:
         from PyPDF2 import PdfWriter, PdfReader
 
         writer = PdfWriter()
@@ -155,44 +158,48 @@ async def get_task_result(task_id: str):
 
         output = io.BytesIO()
         writer.write(output)
-        pdf_bytes = output.getvalue()
+        output.seek(0)
 
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=result_{task_id}.pdf"}
-    )
+        return StreamingResponse(
+            io.BytesIO(output.getvalue()),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=result_{task_id}.pdf"}
+        )
 
 
-@router.get("/task/{task_id}/pages/{page_index}/pdf")
-async def get_page_pdf(task_id: str, page_index: int):
-    """Скачивание PDF отдельной страницы"""
-    pdf_path = redis_client.hget(f"page:{task_id}:{page_index}", "pdf_path")
-    if not pdf_path:
-        raise HTTPException(404, f"PDF for page {page_index} not found")
+@router.get("/result/{task_id}/json")
+async def get_result_json(task_id: str):
+    is_ready, status_info, _ = await get_task_status(task_id)
 
-    pdf_path_str = pdf_path.decode() if isinstance(pdf_path, bytes) else pdf_path
-    pdf_data = minio_client.get_object(BUCKET_PDFS, pdf_path_str)
-    pdf_bytes = pdf_data.read()
-    pdf_data.close()
+    if not is_ready:
+        return JSONResponse(
+            status_code=202,
+            content=status_info
+        )
 
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={task_id}_page_{page_index}.pdf"}
-    )
+    try:
+        json_path = f"{task_id}/result.json"
+        json_data = minio_client.get_object(BUCKET_PDFS, json_path)
+        json_bytes = json_data.read()
+        json_data.close()
+
+        return StreamingResponse(
+            io.BytesIO(json_bytes),
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename=result_{task_id}.json"}
+        )
+    except Exception as e:
+        raise HTTPException(404, f"JSON result not found: {e}")
 
 
 @router.get("/health")
 async def health_check():
-    """Проверка здоровья сервиса"""
     checks = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "components": {}
     }
 
-    # Проверка Redis
     try:
         redis_client.ping()
         checks["components"]["redis"] = {"status": "up"}
@@ -200,7 +207,6 @@ async def health_check():
         checks["components"]["redis"] = {"status": "down", "error": str(e)}
         checks["status"] = "degraded"
 
-    # Проверка MinIO
     try:
         minio_client.bucket_exists(BUCKET_IMAGES)
         checks["components"]["minio"] = {"status": "up"}
@@ -208,16 +214,57 @@ async def health_check():
         checks["components"]["minio"] = {"status": "down", "error": str(e)}
         checks["status"] = "degraded"
 
+    try:
+        db = get_sqlite_client()
+        await db.health_check()
+        checks["components"]["sqlite"] = {"status": "up"}
+    except Exception as e:
+        checks["components"]["sqlite"] = {"status": "down", "error": str(e)}
+        checks["status"] = "degraded"
+
     return checks
 
+@router.get("/statistics")
+async def get_statistics():
+    try:
+        task_keys = redis_client.keys("task:*")
+        pages = []
 
-@router.delete("/task/{task_id}")
-async def delete_task(task_id: str):
-    """Удаление задачи и всех связанных данных"""
-    # Очищаем Redis
-    redis_client.delete(f"task:{task_id}")
+        for task_key in task_keys:
+            task_id = task_key.decode() if isinstance(task_key, bytes) else task_key
+            task_id = task_id.replace("task:", "")
 
-    # Очищаем MinIO (опционально)
-    # minio_client.remove_object(BUCKET_IMAGES, f"{task_id}/")
+            total_pages = int(redis_client.hget(f"task:{task_id}", "total_pages") or 0)
 
-    return {"status": "deleted", "task_id": task_id}
+            for i in range(total_pages):
+                page_status = redis_client.hget(f"page:{task_id}:{i}", "status") or b"pending"
+                total_formulas = int(redis_client.hget(f"page:{task_id}:{i}", "total_formulas") or 0)
+                recognized_count = int(redis_client.hget(f"page:{task_id}:{i}", "recognized_count") or 0)
+                merged_count = int(redis_client.hget(f"page:{task_id}:{i}", "merged_count") or 0)
+                started_at = redis_client.hget(f"page:{task_id}:{i}", "started_at")
+                completed_at = redis_client.hget(f"page:{task_id}:{i}", "completed_at")
+
+                pages.append({
+                    "task_id": task_id,
+                    "page_index": i,
+                    "status": page_status.decode() if isinstance(page_status, bytes) else str(page_status),
+                    "total_formulas": total_formulas,
+                    "formulas_recognized": recognized_count,
+                    "formulas_merged": merged_count,
+                    "started_at": started_at.decode() if isinstance(started_at, bytes) else started_at,
+                    "completed_at": completed_at.decode() if isinstance(completed_at, bytes) else completed_at
+                })
+
+        pages.sort(key=lambda x: x.get("started_at", ""), reverse=True)
+
+        return {
+            "total_pages": len(pages),
+            "pages": pages,
+            "generated_at": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        print(f"[Statistics] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to get statistics: {str(e)}")

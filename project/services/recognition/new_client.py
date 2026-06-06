@@ -14,12 +14,12 @@ import re
 os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
 
 
+from pathlib import Path
+
 class FinetunedLatexOCRClient:
     def __init__(self,
-                #  model_path: str = "new_weights.pth",
-                #  tokenizer_path: str = "tokenizer.json",
-                 model_path: str = str(Path(__file__).parent / "new_weights.pth"),
-                 tokenizer_path = str(Path(__file__).parent / "tokenizer.json"),
+                 model_path: str = None,
+                 tokenizer_path: str = None,
                  device: str = "cuda",
                  max_width: int = 672,
                  max_height: int = 192,
@@ -27,6 +27,11 @@ class FinetunedLatexOCRClient:
                  min_height: int = 32,
                  temperature: float = 0.2,
                  batch_size: int = 8):
+
+        if model_path is None:
+            model_path = str(Path(__file__).parent / "models" / "new_weights.pth")
+        if tokenizer_path is None:
+            tokenizer_path = str(Path(__file__).parent / "models" / "tokenizer.json")
 
         self.device = device if torch.cuda.is_available() else "cpu"
         self.max_width = max_width
@@ -109,18 +114,13 @@ class FinetunedLatexOCRClient:
         return t.to(self.device)
 
     # def _preprocess_batch(self, images: List[Image.Image]) -> torch.Tensor:
-    #     """Предобработка батча изображений"""
     #     tensors = [self._preprocess_image(img).squeeze(0) for img in images]
     #     return torch.stack(tensors).to(self.device)
     def _preprocess_batch(self, images: List[Image.Image]) -> torch.Tensor:
-        """
-        Предобработка батча с приведением к единому размеру.
-        """
         tensors = []
         max_h = 0
         max_w = 0
 
-        # Первый проход: получаем тензоры и находим максимальные размеры
         for img in images:
             t = self._preprocess_image(img).squeeze(0)
             tensors.append(t)
@@ -128,7 +128,6 @@ class FinetunedLatexOCRClient:
             max_h = max(max_h, h)
             max_w = max(max_w, w)
 
-        # Второй проход: паддим до максимального размера
         padded = []
         for t in tensors:
             _, h, w = t.shape
@@ -160,16 +159,25 @@ class FinetunedLatexOCRClient:
         pred = self._normalize_latex(pred)
         return pred
 
+    # def _decode_batch(self, batch_tensor: torch.Tensor) -> List[str]:
+    #     with torch.no_grad():
+    #         dec = self.model.generate(batch_tensor, temperature=self.temperature)
+    #     preds = token2str(dec, self.tokenizer)
+    #     preds = [self._normalize_latex(post_process(p)) for p in preds]
+    #     return preds
+
     def _decode_batch(self, batch_tensor: torch.Tensor) -> List[str]:
-        """Декодирование батча"""
+        print(f"[LaTeX-OCR] _decode_batch: starting generation...")
         with torch.no_grad():
             dec = self.model.generate(batch_tensor, temperature=self.temperature)
+        print(f"[LaTeX-OCR] _decode_batch: generation completed")
         preds = token2str(dec, self.tokenizer)
+        print(f"[LaTeX-OCR] _decode_batch: token2str completed")
         preds = [self._normalize_latex(post_process(p)) for p in preds]
+        print(f"[LaTeX-OCR] _decode_batch: post-processing completed")
         return preds
 
     def recognize_crop(self, image: Image.Image) -> str:
-        """Распознавание одного изображения"""
         try:
             input_tensor = self._preprocess_image(image)
             return self._decode_single(input_tensor)
@@ -177,75 +185,60 @@ class FinetunedLatexOCRClient:
             print(f"[LaTeX-OCR] Ошибка распознавания: {e}")
             return ""
 
+    # def recognize_batch(self, crops: List[Image.Image]) -> List[str]:
+    #     if not crops:
+    #         return []
+
+    #     try:
+    #         batch_tensor = self._preprocess_batch(crops)
+    #         return self._decode_batch(batch_tensor)
+    #     except Exception as e:
+    #         print(f"[LaTeX-OCR] Ошибка батчевого распознавания: {e}")
+    #         return [""] * len(crops)
     def recognize_batch(self, crops: List[Image.Image]) -> List[str]:
-        """
-        Батчевое распознавание нескольких изображений.
-        Это основной метод для production!
-        """
         if not crops:
             return []
 
+        print(f"[LaTeX-OCR] Starting batch recognition of {len(crops)} crops")
+
         try:
+            print(f"[LaTeX-OCR] Preprocessing batch...")
             batch_tensor = self._preprocess_batch(crops)
-            return self._decode_batch(batch_tensor)
+            print(f"[LaTeX-OCR] Batch tensor shape: {batch_tensor.shape}")
+
+            print(f"[LaTeX-OCR] Running model inference...")
+            result = self._decode_batch(batch_tensor)
+            print(f"[LaTeX-OCR] Batch recognition completed, got {len(result)} results")
+            return result
         except Exception as e:
             print(f"[LaTeX-OCR] Ошибка батчевого распознавания: {e}")
+            import traceback
+            traceback.print_exc()
             return [""] * len(crops)
-
-    # async def recognize(self, image: Image.Image, regions: List[Dict]) -> List[Dict]:
-    #     """
-    #     Асинхронное распознавание областей с БАТЧЕВОЙ обработкой.
-    #     ✅ Теперь использует GPU batch!
-    #     """
-    #     if not regions:
-    #         return []
-
-    #     # ШАГ 1: Вырезаем все кропы
-    #     crops = [image.crop(r["bbox"]) for r in regions]
-
-    #     # ШАГ 2: Батчевое распознавание (один forward pass!)
-    #     latex_list = await asyncio.to_thread(self.recognize_batch, crops)
-
-    #     # ШАГ 3: Собираем результаты
-    #     results = []
-    #     for r, latex in zip(regions, latex_list):
-    #         results.append({
-    #             "bbox": r["bbox"],
-    #             "latex": latex,
-    #             "confidence": r.get("confidence", 0.0)
-    #         })
-
-    #     return results
     async def recognize(self, image: Image.Image, regions: List[Dict]) -> List[Dict]:
-        """
-        Асинхронное распознавание областей с АВТОМАТИЧЕСКИМ батчированием.
-        """
+
         if not regions:
             return []
 
-        # ШАГ 1: Вырезаем все кропы
         crops = []
         valid_indices = []
 
         for i, r in enumerate(regions):
             try:
                 crop = image.crop(r["bbox"])
-                # Проверка, что crop не пустой
                 if crop.size[0] > 0 and crop.size[1] > 0:
                     crops.append(crop)
                     valid_indices.append(i)
                 else:
-                    print(f"   ⚠️ Пропущен пустой кроп для региона {i}")
+                    print(f"   Пропущен пустой кроп для региона {i}")
             except Exception as e:
-                print(f"   ⚠️ Ошибка вырезания кропа {i}: {e}")
+                print(f"   Ошибка вырезания кропа {i}: {e}")
 
         if not crops:
             return [{"bbox": r["bbox"], "latex": "", "confidence": 0.0} for r in regions]
 
-        # ШАГ 2: Батчевое распознавание с автоматическим разбиением
         latex_list = await asyncio.to_thread(self.recognize_batch_auto, crops)
 
-        # ШАГ 3: Собираем результаты (сохраняем соответствие с исходными регионами)
         results = []
         latex_idx = 0
         for i, r in enumerate(regions):
@@ -265,9 +258,7 @@ class FinetunedLatexOCRClient:
 
         return results
     async def recognize_async_batch(self, formulas: List[Dict]) -> List[Dict]:
-        """
-        Альтернативный метод: принимает список формул с полем 'crop'.
-        """
+
         if not formulas:
             return []
 
@@ -289,23 +280,12 @@ class FinetunedLatexOCRClient:
         return formulas
 
     def recognize_batch_auto(self, crops: List[Image.Image]) -> List[str]:
-        """
-        Батчевое распознавание с автоматическим разбиением на батчи.
-        Поддерживает последний неполный батч.
-
-        Args:
-            crops: список изображений для распознавания
-
-        Returns:
-            список распознанных LaTeX строк
-        """
         if not crops:
             return []
 
         total = len(crops)
         results = [''] * total
 
-        # Разбиваем на батчи по self.batch_size
         num_batches = (total + self.batch_size - 1) // self.batch_size
 
         print(f"   [Batch] Всего кропов: {total}, батчей: {num_batches}, размер батча: {self.batch_size}")
@@ -318,10 +298,8 @@ class FinetunedLatexOCRClient:
             print(f"   [Batch {batch_idx + 1}/{num_batches}] "
                 f"Обработка {len(batch)} кропов ({start_idx + 1}-{end_idx})")
 
-            # Обрабатываем батч
             batch_results = self.recognize_batch(batch)
 
-            # Сохраняем результаты
             for i, res in enumerate(batch_results):
                 results[start_idx + i] = res
 

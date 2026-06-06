@@ -1,4 +1,5 @@
 import os
+import time
 import sys
 import cv2
 import torch
@@ -91,42 +92,40 @@ class FinetunedUNetFormer:
 
     def _build_model(self):
         try:
-            import sys
-            from pathlib import Path
-            geoseg_path = Path(__file__).parent.parent.parent.parent / "GeoSeg"
-            if geoseg_path.exists() and str(geoseg_path) not in sys.path:
-                sys.path.insert(0, str(geoseg_path))
-            from GeoSeg.geoseg.models.UNetFormer import UNetFormer
+            from .UNetFormer import UNetFormer
+
             model = UNetFormer(
                 num_classes=self.num_classes,
                 backbone_name=self.backbone_name,
                 pretrained=False
             )
-            print(f"[UNetFormer] Используется GeoSeg модель с энкодером {self.backbone_name}")
+            print(f"[UNetFormer] Используется UNetFormer с энкодером {self.backbone_name}")
             return model
-        except ImportError as e:
-            print(f"[UNetFormer] GeoSeg не найден: {e}")
 
-        import segmentation_models_pytorch as smp
-        encoder_mapping = {
-            "tf_efficientnet_b0": "timm-efficientnet-b0",
-            "tf_efficientnet_b1": "timm-efficientnet-b1",
-            "tf_efficientnet_b2": "timm-efficientnet-b2",
-            "tf_efficientnet_b3": "timm-efficientnet-b3",
-            "tf_efficientnet_b4": "timm-efficientnet-b4",
-            "tf_efficientnet_b5": "timm-efficientnet-b5",
-            "tf_efficientnet_b6": "timm-efficientnet-b6",
-            "tf_efficientnet_b7": "timm-efficientnet-b7",
-        }
-        encoder_name_smp = encoder_mapping.get(self.backbone_name, self.backbone_name)
-        model = smp.Unet(
-            encoder_name=encoder_name_smp,
-            encoder_weights=None,
-            in_channels=3,
-            classes=self.num_classes,
-        )
-        print(f"[UNetFormer] Используется smp.Unet с энкодером {encoder_name_smp}")
-        return model
+        except ImportError as e:
+            print(f"[UNetFormer] Ошибка импорта UNetFormer: {e}")
+            print(f"[UNetFormer] Проверьте, что файл UNetFormer.py находится в той же папке")
+
+            import segmentation_models_pytorch as smp
+            encoder_mapping = {
+                "tf_efficientnet_b0": "timm-efficientnet-b0",
+                "tf_efficientnet_b1": "timm-efficientnet-b1",
+                "tf_efficientnet_b2": "timm-efficientnet-b2",
+                "tf_efficientnet_b3": "timm-efficientnet-b3",
+                "tf_efficientnet_b4": "timm-efficientnet-b4",
+                "tf_efficientnet_b5": "timm-efficientnet-b5",
+                "tf_efficientnet_b6": "timm-efficientnet-b6",
+                "tf_efficientnet_b7": "timm-efficientnet-b7",
+            }
+            encoder_name_smp = encoder_mapping.get(self.backbone_name, self.backbone_name)
+            model = smp.Unet(
+                encoder_name=encoder_name_smp,
+                encoder_weights=None,
+                in_channels=3,
+                classes=self.num_classes,
+            )
+            print(f"[UNetFormer] Используется smp.Unet с энкодером {encoder_name_smp}")
+            return model
 
     def _patch_attention_padding(self, model):
         import torch.nn.functional as F
@@ -281,47 +280,81 @@ class FinetunedUNetFormer:
             logits = 0.5 * (logits + torch.flip(logits_f, dims=[3]))
         return logits
 
+
     @torch.inference_mode()
     def _infer_probability(self, img: np.ndarray) -> np.ndarray:
         work = img.copy()
         h, w = work.shape[:2]
         tile_size = self.config.tile_size
+
+        print(f"[UNetFormer] Starting inference on {w}x{h} image")
+        print(f"[UNetFormer] Tile size: {tile_size}, Overlap: {self.config.infer_overlap}")
+
         if (not self.config.infer_force_tiled) and h <= tile_size and w <= tile_size:
+            print(f"[UNetFormer] Small image, processing directly")
             tile, vh, vw = self._crop_with_pad(work, 0, 0, tile_size, 255)
             x = self._normalize(tile).unsqueeze(0).to(self.device)
             logits = self._predict_logits(x)
             prob = torch.softmax(logits, dim=1)[0, 1].cpu().numpy()[:vh, :vw]
             return np.clip(prob.astype(np.float32), 0, 1)
+
         xs = self._sliding_positions(w, tile_size, self.config.infer_overlap)
         ys = self._sliding_positions(h, tile_size, self.config.infer_overlap)
+
+        total_tiles = len(xs) * len(ys)
+        print(f"[UNetFormer] Total tiles to process: {total_tiles} ({len(xs)}x{len(ys)})")
+
         weight = self._get_weight_map(tile_size, self.config.infer_gaussian_sigma_scale)
         prob_sum = np.zeros((h, w), dtype=np.float32)
         weight_sum = np.zeros((h, w), dtype=np.float32)
+
         batch_tensors = []
         batch_meta = []
+        processed_tiles = 0
+
         def flush():
+            nonlocal processed_tiles
             if not batch_tensors:
                 return
             batch = torch.stack(batch_tensors).to(self.device)
             logits = self._predict_logits(batch)
             probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
+
             for i, (x0, y0, vh, vw) in enumerate(batch_meta):
                 p = np.nan_to_num(probs[i], nan=0.0, posinf=1.0, neginf=0.0).astype(np.float32)[:vh, :vw]
                 w_local = weight[:vh, :vw]
                 prob_sum[y0:y0+vh, x0:x0+vw] += p * w_local
                 weight_sum[y0:y0+vh, x0:x0+vw] += w_local
+                processed_tiles += 1
+
+                if processed_tiles % max(1, total_tiles // 10) == 0 or processed_tiles % 50 == 0:
+                    pct = processed_tiles / total_tiles * 100
+                    print(f"[UNetFormer] Progress: {processed_tiles}/{total_tiles} tiles ({pct:.1f}%)")
+
             batch_tensors.clear()
             batch_meta.clear()
+
+        print(f"[UNetFormer] Starting tile processing...")
+        start_time = time.time()
+
         for y0 in ys:
             for x0 in xs:
                 tile, vh, vw = self._crop_with_pad(work, x0, y0, tile_size, 255)
                 batch_tensors.append(self._normalize(tile))
                 batch_meta.append((x0, y0, vh, vw))
+
                 if len(batch_tensors) >= self.config.infer_sw_batch_size:
                     flush()
+
         flush()
+
+        elapsed = time.time() - start_time
+        print(f"[UNetFormer] Tile processing completed in {elapsed:.2f}s")
+
         prob = prob_sum / np.maximum(weight_sum, 1e-6)
+        print(f"[UNetFormer] Final probability map shape: {prob.shape}")
         return np.clip(prob.astype(np.float32), 0, 1)
+
 
     def predict_mask(self, image: np.ndarray) -> np.ndarray:
         prob = self._infer_probability(image)
@@ -331,17 +364,43 @@ class FinetunedUNetFormer:
     def predict_probability(self, image: np.ndarray) -> np.ndarray:
         return self._infer_probability(image)
 
+
     def extract_formula_regions(self, image: np.ndarray, margin: int = 10,
                                 merge_distance: int = 30,
                                 horizontal_gap: int = 40,
                                 vertical_overlap: int = 5,
                                 min_formula_area: int = 50,
                                 use_dsu: bool = True) -> List[Dict]:
+
+        print(f"[UNetFormer] extract_formula_regions started")
+        print(f"[UNetFormer] Image shape: {image.shape}")
+        start_total = time.time()
+
+        print(f"[UNetFormer] Step 1/4: Predicting mask...")
+        mask_start = time.time()
         mask = self.predict_mask(image)
+        mask_time = time.time() - mask_start
+        print(f"[UNetFormer] Mask predicted in {mask_time:.2f}s, mask shape: {mask.shape}")
+
+        print(f"[UNetFormer] Step 2/4: Predicting probability map...")
+        prob_start = time.time()
         prob = self._infer_probability(image)
+        prob_time = time.time() - prob_start
+        print(f"[UNetFormer] Probability map predicted in {prob_time:.2f}s")
+
+        print(f"[UNetFormer] Step 3/4: Finding contours...")
+        contours_start = time.time()
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours_time = time.time() - contours_start
+        print(f"[UNetFormer] Found {len(contours)} contours in {contours_time:.2f}s")
+
         if not contours:
+            print(f"[UNetFormer] No contours found, returning empty list")
             return []
+
+        print(f"[UNetFormer] Step 4/4: Building components...")
+        components_start = time.time()
+
         components = []
         for i, contour in enumerate(contours):
             x, y, w, h = cv2.boundingRect(contour)
@@ -358,9 +417,12 @@ class FinetunedUNetFormer:
                 'area': area,
                 'contour': contour
             })
-        if not components:
-            return []
+
+        print(f"[UNetFormer] Built {len(components)} valid components (min_area={min_formula_area})")
+
         if use_dsu and len(components) > 1:
+            print(f"[UNetFormer] Merging components with DSU...")
+            merge_start = time.time()
             n = len(components)
             dsu = DSU(n)
             components.sort(key=lambda c: c['bbox'][1])
@@ -369,14 +431,22 @@ class FinetunedUNetFormer:
                 for j in range(i + 1, min(i + window_size, n)):
                     if self._should_merge(components[i], components[j]):
                         dsu.union(i, j)
+
             clusters = {}
             for i in range(n):
                 root = dsu.find(i)
                 clusters.setdefault(root, []).append(components[i])
+
             formulas = self._build_formulas_from_clusters(clusters, image, prob, mask, margin)
+            merge_time = time.time() - merge_start
+            print(f"[UNetFormer] Merged into {len(formulas)} clusters in {merge_time:.2f}s")
         else:
+            print(f"[UNetFormer] Using legacy merging (no DSU)")
             formulas = self._build_formulas_legacy(components, image, prob, mask, margin, merge_distance)
-        formulas.sort(key=lambda f: (f['bbox'][1], f['bbox'][0]))
+
+        total_time = time.time() - start_total
+        print(f"[UNetFormer] EXTRACT COMPLETE: {len(formulas)} formulas in {total_time:.2f}s")
+
         return formulas
 
     def _should_merge(self, comp1: Dict, comp2: Dict) -> bool:

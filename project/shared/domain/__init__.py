@@ -1,5 +1,3 @@
-"""Domain models for OCR and formula processing."""
-
 from .bbox import BBox
 from .node import Node
 from .utils import (

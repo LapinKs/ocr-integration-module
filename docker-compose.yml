@@ -1,0 +1,214 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+
+  api:
+    build:
+      context: ./project
+      dockerfile: Dockerfile
+      target: api
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      SQLITE_DB_PATH: /app/data/tasks.db
+    volumes:
+      - ./project:/app
+      - sqlite_data:/app/data
+    restart: unless-stopped
+
+  segmentation-worker:
+    build:
+      context: ./project
+      dockerfile: Dockerfile
+      target: segmentation
+    depends_on:
+      - redis
+      - minio
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      PUSHGATEWAY_URL: pushgateway:9091
+      C_FORCE_ROOT: "1"
+    volumes:
+      - ./project:/app
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+
+  recognition-worker:
+    build:
+      context: ./project
+      dockerfile: Dockerfile
+      target: recognition
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      CUDA_VISIBLE_DEVICES: ""
+      PUSHGATEWAY_URL: pushgateway:9091
+      C_FORCE_ROOT: "1"
+    volumes:
+      - ./project:/app
+    restart: unless-stopped
+
+  merge-worker:
+    build:
+      context: ./project
+      dockerfile: Dockerfile
+      target: merge
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      PUSHGATEWAY_URL: pushgateway:9091
+      C_FORCE_ROOT: "1"
+    volumes:
+      - ./project:/app
+    restart: unless-stopped
+
+  ocr-worker:
+    build:
+      context: ./project
+      dockerfile: Dockerfile
+      target: ocr
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      OCR_API_KEY: iACQFtrNBObX0RwjYA_UVmFqxt7lSIqOu_QR7UK0Syk
+      OCR_BASE_URL: https://ocrbot.ru/api/v1
+      OCR_FALLBACK_DIR: /app/services/ocr/fallback
+      PUSHGATEWAY_URL: pushgateway:9091
+      C_FORCE_ROOT: "1"
+    volumes:
+      - ./project:/app
+    restart: unless-stopped
+
+  pdf-worker:
+    build:
+      context: ./project
+      dockerfile: Dockerfile
+      target: pdf
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      SQLITE_DB_PATH: /app/data/tasks.db
+      PUSHGATEWAY_URL: pushgateway:9091
+      C_FORCE_ROOT: "1"
+    volumes:
+      - ./project:/app
+      - sqlite_data:/app/data
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+
+  pushgateway:
+    image: prom/pushgateway:latest
+    ports:
+      - "9091:9091"
+    command:
+      - '--persistence.file=/data/pushgateway.data'
+      - '--persistence.interval=5m'
+    restart: unless-stopped
+    volumes:
+      - pushgateway_data:/data
+
+volumes:
+  redis_data:
+  minio_data:
+  sqlite_data:
+  prometheus_data:
+  grafana_data:
+  pushgateway_data:

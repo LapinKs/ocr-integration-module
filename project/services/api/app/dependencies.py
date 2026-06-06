@@ -1,6 +1,3 @@
-"""
-Dependencies for API routes.
-"""
 from shared.infrastructure.redis_client import get_redis_client
 from shared.infrastructure.minio_client import get_minio_client
 

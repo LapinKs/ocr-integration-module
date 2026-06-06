@@ -20,6 +20,7 @@ class OptimizedPageParser:
 
         return root, width, height
 
+
     @staticmethod
     def _parse_node(node_json: dict, parent: Node = None) -> Node:
         node_type = node_json.get("@type", "UNKNOWN")
@@ -38,6 +39,7 @@ class OptimizedPageParser:
             node.children.append(child_node)
         return node
 
+
     @staticmethod
     def _parse_bbox(node_json: dict) -> BBox:
         x = int(node_json.get("@X", 0))
@@ -45,6 +47,7 @@ class OptimizedPageParser:
         w = int(node_json.get("@W", 0))
         h = int(node_json.get("@H", 0))
         return BBox(x, y, x + w, y + h)
+
 
     @staticmethod
     def _sort_tree(node: Node):
